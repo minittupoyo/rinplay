@@ -11,7 +11,7 @@
 - 接続: `adb -s <シリアル>`(複数端末がある場合は必ず -s を付ける)
 - 端末: Pixel 6a(Android 17 / API 37)、USB DAC: Shanling UA3
 - 無線デバッグ: USB 接続中に `adb tcpip 5555` → `adb connect <端末IP>:5555`。端末の再起動や IP 変更で切れる(IP は DHCP)
-- パッケージ名: `com.example.myplayer`(変更したらここも更新)
+- アプリ名: RinPlay / パッケージ名(applicationId・namespace): `net.minittu.rinplay`(変更したらここも更新)。旧名 `com.example.myplayer` のアプリが端末に残っている場合は、別アプリとして共存する(設定・権限は引き継がれない)
 - USB接続中は `adb shell svc power stayon usb` で画面点灯を維持
 - テスト音源: `/sdcard/Music/` に FLAC 4 つ(44.1k/16, 48k/16, 88.2k/24, 96k/24)。ffmpeg で生成した正弦波(タグなし。アルバム名はフォルダ名の `Music`、アーティストは `Generated` になる)
 - 形式表示の確認用: `/sdcard/Music/TestFormats/` に、アルバム `Formats` / Fmt Test の 4 曲(`MP3 320k`、`MP3 VBR V2`、`AAC 256k`、`FLAC 24bit 48k`)と、タグなしの WAV 24bit 1 つ(`fmt_wav_24`)。ffmpeg で生成(WAV はタグなしだと MediaStore に音楽として載らず、アルバムは `TestFormats`、アーティストは不明になる)
@@ -19,8 +19,8 @@
 
 ## よく使うコマンド
 - ビルド+インストール: `./gradlew installDebug`
-- 起動: `adb shell am start -n com.example.myplayer/.MainActivity`
-- ログ: `adb logcat --pid=$(adb shell pidof com.example.myplayer)`
+- 起動: `adb shell am start -n net.minittu.rinplay/.MainActivity`
+- ログ: `adb logcat --pid=$(adb shell pidof net.minittu.rinplay)`
 - スクショ: `adb exec-out screencap -p > "$TEMP/screen.png"`(Git Bash。`/tmp` は使わない)
 - 音声出力の確認: `adb shell dumpsys media.audio_flinger` / `adb shell dumpsys audio`
 - メディアセッション確認: `adb shell dumpsys media_session`
@@ -84,7 +84,7 @@
 - `TotalMatches` は信用しない。`Music Server` は 2 ページ目以降で「開始位置以降の残り件数」を返す(例: 全 50 件を 20 件ずつ読むと total が 50 → 30 → 10)。「全件数だけで打ち切る」と最後のページが落ちるため、`DlnaPage.hasMore` は「ページが要求件数でいっぱい、または全件数が先の件数を示す」で判断する。表示する全件数は 1 ページ目の値を使う
 - ページ送りの動作確認は、`DLNA_PAGE_SIZE` を一時的に 20 にして行う(手元の最大フォルダが 50 件のため)。戻し忘れに注意
 - 最後に開いたサーバー(UDN)とフォルダ階層(ID+タイトル)は `DlnaPrefs`(SharedPreferences `dlna`)に保存する。DLNA タブを開いて該当サーバーが検出されたとき 1 度だけ復元する。復元の判断が済むまでは保存しない(起動直後の空状態で上書きしないため)。サーバー一覧に戻っても最後のサーバーは残る(階層は空になる)
-- 保存内容の確認: `adb shell run-as com.example.myplayer cat shared_prefs/dlna.xml`(debug ビルド)
+- 保存内容の確認: `adb shell run-as net.minittu.rinplay cat shared_prefs/dlna.xml`(debug ビルド)
 - 下部ナビのセクション(ライブラリ / DLNA)は `UiPrefs`(SharedPreferences `ui`、キー `last_tab`、0=ライブラリ 1=DLNA)に保存し、起動時にそのセクションで開く。切り替えのたびに保存する。初回は保存がないのでライブラリ。確認は `shared_prefs/ui.xml`
 - UI: アプリアイコンの見た目(ランチャー上の表示)、横向き・タブレットなど大きい画面、フォントを大きくしたとき、再生キューの表示・並べ替え、ミニプレイヤーのスワイプ操作は未確認/未実装
 - ローカルの下位タブ(曲 / アルバム / アーティスト)と検索語は保存しない(`rememberSaveable` なので画面回転では残るが、アプリを終了すると消える)
@@ -103,7 +103,7 @@
 - 一覧の行は `LibraryRow`、アルバムのカードは `AlbumCard`、画像は `Artwork`(`LibraryRow.kt`)でローカルと DLNA を共通化。ミニプレイヤーと全画面「再生中」は埋め込みジャケット(`artworkData`)を優先し、なければ `artworkUri`
 
 ### UI の構成(Material 3)
-- `MainActivity` → `MyPlayerTheme`(`Theme.kt`)→ `AppRoot`(`AppRoot.kt`)。エッジ・ツー・エッジ。ダイナミックカラー(Android 12+)とライト/ダークは端末設定に従う(起動直後の背景は `values/themes.xml` と `values-night/themes.xml`)
+- `MainActivity` → `RinPlayTheme`(`Theme.kt`)→ `AppRoot`(`AppRoot.kt`)。エッジ・ツー・エッジ。ダイナミックカラー(Android 12+)とライト/ダークは端末設定に従う(起動直後の背景は `values/themes.xml` と `values-night/themes.xml`)
 - `AppRoot`: 権限の要求、`MediaController` の接続、ライブラリ読み込み(ローカルは `Dispatchers.IO`)、下部の「ミニプレイヤー + ナビ(ライブラリ / DLNA)」、ミニプレイヤーをタップで開く全画面「再生中」(`AnimatedVisibility`。開いている間は戻るキーでまず閉じる)
 - 再生状態は `PlaybackUiState`(`rememberPlaybackUiState`)で 1 か所の `Player.Listener` から受け、ミニプレイヤーと全画面で共有する(再生中・曲・位置・シャッフル・リピート)。位置は再生中だけ 500ms ごとに更新
 - `LocalLibraryScreen`: 上部バー(タイトル + 検索アイコン。検索は `SearchTopBar` で、バーの中に入力欄が開く)+ タブ(曲 / アルバム / アーティスト)。アルバムは大きなジャケットのグリッド(`LazyVerticalGrid`)。再生中の曲は、タイトルをテーマ色にして右端にアイコンを出す

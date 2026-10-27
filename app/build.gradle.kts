@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.myplayer"
+    namespace = "net.minittu.rinplay"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.example.myplayer"
+        applicationId = "net.minittu.rinplay"
         minSdk = 26
         targetSdk = 37
         versionCode = 1

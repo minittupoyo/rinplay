@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MyPlayer"
+rootProject.name = "RinPlay"
 include(":app")

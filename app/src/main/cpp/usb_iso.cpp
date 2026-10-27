@@ -204,7 +204,7 @@ void dumpStall(Stream* s, int restarts) {
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_com_example_myplayer_usb_UsbIsoNative_create(
+JNIEXPORT jlong JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_create(
         JNIEnv*, jobject, jint fd, jint epOut, jint epFb, jint maxPacket, jint interval,
         jint bytesPerFrame, jint rate) {
     auto* s = new Stream();
@@ -235,7 +235,7 @@ JNIEXPORT jlong JNICALL Java_com_example_myplayer_usb_UsbIsoNative_create(
 //
 // 完了が一定時間来ない(カーネルが ISO URB を完了させなくなる端末がある)ときは、状態をログに出し、
 // 全 URB を取り消して投げ直す。
-JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, jobject, jlong h) {
+JNIEXPORT jint JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_run(JNIEnv*, jobject, jlong h) {
     auto* s = (Stream*)h;
     s->running = true;
     int result = 0;
@@ -310,21 +310,21 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, j
     return result;
 }
 
-JNIEXPORT void JNICALL Java_com_example_myplayer_usb_UsbIsoNative_requestStop(JNIEnv*, jobject, jlong h) {
+JNIEXPORT void JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_requestStop(JNIEnv*, jobject, jlong h) {
     // run() は REAPURB で待っているので、ここでは取り消しだけ行い、完了通知で起こす。
     auto* s = (Stream*)h;
     s->running = false;
     for (auto& sl : s->slots) if (sl.inflight) ioctl(s->fd, USBDEVFS_DISCARDURB, sl.urb);
 }
 
-JNIEXPORT void JNICALL Java_com_example_myplayer_usb_UsbIsoNative_destroy(JNIEnv*, jobject, jlong h) {
+JNIEXPORT void JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_destroy(JNIEnv*, jobject, jlong h) {
     auto* s = (Stream*)h;
     for (auto& sl : s->slots) { free(sl.urb); free(sl.buf); }
     free(s->ring);
     delete s;
 }
 
-JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_write(
+JNIEXPORT jint JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_write(
         JNIEnv* env, jobject, jlong h, jbyteArray data, jint off, jint len) {
     auto* s = (Stream*)h;
     std::lock_guard<std::mutex> g(s->mu);
@@ -339,13 +339,13 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_write(
     return (jint)n;
 }
 
-JNIEXPORT void JNICALL Java_com_example_myplayer_usb_UsbIsoNative_setPaused(JNIEnv*, jobject, jlong h, jboolean p) {
+JNIEXPORT void JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_setPaused(JNIEnv*, jobject, jlong h, jboolean p) {
     auto* s = (Stream*)h;
     std::lock_guard<std::mutex> g(s->mu);
     s->paused = p;
 }
 
-JNIEXPORT void JNICALL Java_com_example_myplayer_usb_UsbIsoNative_flush(JNIEnv*, jobject, jlong h) {
+JNIEXPORT void JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_flush(JNIEnv*, jobject, jlong h) {
     auto* s = (Stream*)h;
     std::lock_guard<std::mutex> g(s->mu);
     s->tail = s->head;
@@ -353,17 +353,17 @@ JNIEXPORT void JNICALL Java_com_example_myplayer_usb_UsbIsoNative_flush(JNIEnv*,
     s->framesPlayed = 0;
 }
 
-JNIEXPORT jlong JNICALL Java_com_example_myplayer_usb_UsbIsoNative_framesPlayed(JNIEnv*, jobject, jlong h) {
+JNIEXPORT jlong JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_framesPlayed(JNIEnv*, jobject, jlong h) {
     return ((Stream*)h)->framesPlayed.load();
 }
 
-JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_freeBytes(JNIEnv*, jobject, jlong h) {
+JNIEXPORT jint JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_freeBytes(JNIEnv*, jobject, jlong h) {
     auto* s = (Stream*)h;
     std::lock_guard<std::mutex> g(s->mu);
     return (jint)(kRingBytes - (s->head - s->tail));
 }
 
-JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_underruns(JNIEnv*, jobject, jlong h) {
+JNIEXPORT jint JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_underruns(JNIEnv*, jobject, jlong h) {
     return ((Stream*)h)->underruns.load();
 }
 
@@ -373,7 +373,7 @@ extern "C" {
 
 // カーネルのドライバ(snd-usb-audio など)をインターフェースに付け直す(libusb の attach_kernel_driver と同じ)。
 // claim でドライバを切り離したままだと、OS の音声出力がこの DAC に出せなくなる。0 以上 = 成功、負 = -errno。
-JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_attachKernelDriver(
+JNIEXPORT jint JNICALL Java_net_minittu_rinplay_usb_UsbIsoNative_attachKernelDriver(
         JNIEnv*, jobject, jint fd, jint ifno) {
     usbdevfs_ioctl cmd;
     memset(&cmd, 0, sizeof(cmd));

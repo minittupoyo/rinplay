@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 起動直後(Compose が描画する前)の背景。ライト -->
-    <style name="Theme.MyPlayer" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.RinPlay" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>
