@@ -21,6 +21,7 @@ object UsbVolume {
     const val INITIAL_MAX_DB256 = 0
     private const val KEY_INITIAL = "initial_db256"
     private const val KEY_KEEP = "keep_volume"
+    private const val KEY_ALLOW_FIXED = "allow_no_volume_dac"
     private const val KEY_LAST = "last_db256"
 
     private val _state = MutableStateFlow<UsbVolumeState?>(null)
@@ -31,6 +32,10 @@ object UsbVolume {
 
     private val _keep = MutableStateFlow(false)
     val keep: StateFlow<Boolean> = _keep
+
+    private val _allowFixed = MutableStateFlow(false)
+    /** DAC 自身の音量を操作できない機種(据え置き型の DAC / アンプなど)でも、USB 直結を使うか。既定 OFF。 */
+    val allowFixed: StateFlow<Boolean> = _allowFixed
 
     private var prefs: SharedPreferences? = null
     private var output: UsbOutput? = null
@@ -43,6 +48,7 @@ object UsbVolume {
         prefs = p
         _initial.value = p.getInt(KEY_INITIAL, DEFAULT_DB256).coerceIn(INITIAL_MIN_DB256, INITIAL_MAX_DB256)
         _keep.value = p.getBoolean(KEY_KEEP, false)
+        _allowFixed.value = p.getBoolean(KEY_ALLOW_FIXED, false)
     }
 
     /** 保持する設定が ON で、保存された最後の音量があればそれ。なければ初期音量。 */
@@ -78,6 +84,11 @@ object UsbVolume {
         session = db256
         if (_keep.value) prefs?.edit()?.putInt(KEY_LAST, db256)?.apply()
         apply(db256)
+    }
+
+    fun setAllowFixed(allow: Boolean) {
+        _allowFixed.value = allow
+        prefs?.edit()?.putBoolean(KEY_ALLOW_FIXED, allow)?.apply()
     }
 
     /** 「音量を保持する」。ON にしたとき、今のスライダーの値があれば保存する。OFF にすると保存済みの音量は捨てる。 */

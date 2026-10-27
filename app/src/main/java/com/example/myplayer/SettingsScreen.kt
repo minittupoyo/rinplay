@@ -72,5 +72,25 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             }
             Switch(checked = keep, onCheckedChange = { UsbVolume.setKeep(it) })
         }
+
+        val allowFixed by UsbVolume.allowFixed.collectAsState()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                Text("音量調整のない DAC でも USB 直結を使う", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "本体のダイヤルなどで音量を調整する DAC / アンプ向けです(OS の音量とは別)。" +
+                        "アプリから音量を操作できないので、音量スライダーは出ません。" +
+                        "ONにする前に、DAC 側の音量とゲインを低くしてください。" +
+                        "切り替えは、次に再生を始めるときから有効です。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Switch(checked = allowFixed, onCheckedChange = { UsbVolume.setAllowFixed(it) })
+        }
     }
 }

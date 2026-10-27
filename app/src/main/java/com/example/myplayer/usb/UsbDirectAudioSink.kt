@@ -39,6 +39,12 @@ class UsbDirectAudioSink(
     private var playing = false
     private var scratch = ByteArray(0)
 
+    // 前のバッファの端に残った、1 フレームに満たない端数(次のバッファの先頭で補う)
+    private val carry = ByteArray(8)
+    private var carryLen = 0
+    private var firstBuffer = true
+    private var stalledSinceMs = 0L
+
     override fun configure(config: AudioSink.AudioSinkConfig) {
         val f = config.format
         val bits = inputBits(f)
@@ -93,6 +99,8 @@ class UsbDirectAudioSink(
     private fun resetStreamState() {
         written = 0
         needStart = true
+        carryLen = 0
+        firstBuffer = true
         handledEos = false
         usb?.flush()
     }
@@ -119,14 +127,53 @@ class UsbDirectAudioSink(
         }
         val inFrame = inBytes * 2
         val outFrame = out.bytesPerFrame
-        val frames = minOf(buffer.remaining() / inFrame, out.freeBytes() / outFrame)
-        if (frames <= 0) return !buffer.hasRemaining()
+        if (firstBuffer) {
+            firstBuffer = false
+            Log.i(TAG, "first buffer: encoding=$encoding remaining=${buffer.remaining()} inFrame=$inFrame order=${buffer.order()}")
+        }
 
-        if (scratch.size < frames * outFrame) scratch = ByteArray(frames * outFrame)
-        convert(buffer, frames, out.alt.subslotSize)
-        val n = out.write(scratch, 0, frames * outFrame)
-        written += n / outFrame
-        return !buffer.hasRemaining()
+        // 前のバッファの端に 1 フレームに満たない端数が残っていたら、このバッファの先頭で補って 1 フレームにして出す。
+        if (carryLen > 0) {
+            while (carryLen < inFrame && buffer.hasRemaining()) carry[carryLen++] = buffer.get()
+            if (carryLen < inFrame) return true // このバッファは使い切った(まだ端数)
+            if (out.freeBytes() < outFrame) return accepted(buffer, out, progressed = false)
+            if (scratch.size < outFrame) scratch = ByteArray(outFrame)
+            convert(ByteBuffer.wrap(carry, 0, inFrame), 1, out.alt.subslotSize)
+            written += out.write(scratch, 0, outFrame) / outFrame
+            carryLen = 0
+        }
+
+        val frames = minOf(buffer.remaining() / inFrame, out.freeBytes() / outFrame)
+        if (frames > 0) {
+            if (scratch.size < frames * outFrame) scratch = ByteArray(frames * outFrame)
+            convert(buffer, frames, out.alt.subslotSize)
+            written += out.write(scratch, 0, frames * outFrame) / outFrame
+        }
+        // 端が 1 フレームに満たなければ、次のバッファに持ち越す(残したままだと永久に進めなくなる)。
+        if (buffer.hasRemaining() && buffer.remaining() < inFrame) {
+            Log.i(TAG, "partial frame carried: ${buffer.remaining()} of $inFrame bytes")
+            while (buffer.hasRemaining()) carry[carryLen++] = buffer.get()
+        }
+        return accepted(buffer, out, progressed = frames > 0)
+    }
+
+    /** バッファを使い切ったかを返す。進めずに 1 秒以上詰まったら、原因の手がかりをログに出す。 */
+    private fun accepted(buffer: ByteBuffer, out: UsbOutput, progressed: Boolean): Boolean {
+        val done = !buffer.hasRemaining()
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (done || progressed) {
+            stalledSinceMs = 0
+        } else if (stalledSinceMs == 0L) {
+            stalledSinceMs = now
+        } else if (now - stalledSinceMs > 1000) {
+            stalledSinceMs = now
+            Log.w(
+                TAG,
+                "stalled: remaining=${buffer.remaining()} free=${out.freeBytes()} played=${out.framesPlayed()} " +
+                    "written=$written alive=${out.alive} playing=$playing carry=$carryLen",
+            )
+        }
+        return done
     }
 
     /** 入力 [frames] フレームを、上位詰め 32bit 整数を経由して DAC の 1 サンプル幅(subslot)に詰める。 */

@@ -5,6 +5,8 @@
 //   を読み、パケットごとのフレーム数を調整する。
 // - データが足りないときは無音(ゼロ)を送って、クロックを途切れさせない。
 #include <jni.h>
+#include <poll.h>
+#include <time.h>
 #include <android/log.h>
 #include <linux/usbdevice_fs.h>
 #include <sys/ioctl.h>
@@ -22,8 +24,8 @@
 
 namespace {
 
-constexpr int kOutUrbs = 8;
-constexpr int kOutPackets = 32;   // 1 URB = 32 パケット(高速 USB・interval 1 で 4ms)
+constexpr int kOutUrbs = 16;
+constexpr int kOutPackets = 8;    // 1 URB = 8 パケット(高速 USB・interval 1 で 1ms)。常時 16 本 = 16ms 分
 constexpr int kFbUrbs = 2;
 constexpr int kFbPackets = 8;
 constexpr size_t kRingBytes = 1 << 20;
@@ -55,6 +57,8 @@ struct Stream {
     std::atomic<int64_t> framesPlayed{0};
     std::atomic<int> underruns{0};
     std::atomic<int> errors{0};
+    uint64_t outDone = 0, fbDone = 0;  // run スレッドだけが触る(診断用)
+    uint32_t lastStart = 0;
 };
 
 size_t urbSize(int packets) { return sizeof(usbdevfs_urb) + packets * sizeof(usbdevfs_iso_packet_desc); }
@@ -151,6 +155,51 @@ void onFeedback(Stream* s, Slot& f) {
     if (perPacket >= lo && perPacket <= hi) s->curQ16 = perPacket;
 }
 
+
+int64_t nowMs() {
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+constexpr int kPollMs = 100;
+constexpr int kStallMs = 600;   // 完了がこれだけ来なければ止まったとみなす
+constexpr int kMaxRestarts = 5;
+
+// 投入済みの URB が全部返ってくるまで(最大 timeoutMs)回収する。
+void reapAll(Stream* s, int timeoutMs) {
+    for (int waited = 0; waited <= timeoutMs;) {
+        usbdevfs_urb* r = nullptr;
+        if (ioctl(s->fd, USBDEVFS_REAPURBNDELAY, &r) == 0) {
+            ((Slot*)r->usercontext)->inflight = false;
+            continue;
+        }
+        if (errno == EINTR) continue;
+        bool any = false;
+        for (auto& sl : s->slots) any |= sl.inflight;
+        if (!any || errno != EAGAIN) return;
+        pollfd pfd{s->fd, POLLOUT, 0};
+        poll(&pfd, 1, 20);
+        waited += 20;
+    }
+}
+
+// 完了が止まったときの状態をログに出す。
+void dumpStall(Stream* s, int restarts) {
+    unsigned int speed = 0;
+    int sp = ioctl(s->fd, USBDEVFS_GET_SPEED, 0);
+    if (sp > 0) speed = (unsigned int)sp;
+    LOGW("STALL #%d out=%llu fb=%llu played=%lld lastStart=%u curQ16=%llu speed=%u",
+         restarts + 1, (unsigned long long)s->outDone, (unsigned long long)s->fbDone,
+         (long long)s->framesPlayed.load(), s->lastStart, (unsigned long long)s->curQ16, speed);
+    int i = 0;
+    for (auto& sl : s->slots) {
+        LOGW("  slot%d fb=%d inflight=%d start_frame=%u status=%d actual=%d errs=%d pkts=%d",
+             i++, sl.isFb, sl.inflight, sl.urb->start_frame, sl.urb->status,
+             sl.urb->actual_length, sl.urb->error_count, sl.urb->number_of_packets);
+    }
+}
+
 }  // namespace
 
 extern "C" {
@@ -183,15 +232,42 @@ JNIEXPORT jlong JNICALL Java_com_example_myplayer_usb_UsbIsoNative_create(
 }
 
 // 呼んだスレッドで、stop() が呼ばれるまで URB を回し続ける。戻り値は 0 = 正常終了、負 = エラー終了。
+//
+// 完了が一定時間来ない(カーネルが ISO URB を完了させなくなる端末がある)ときは、状態をログに出し、
+// 全 URB を取り消して投げ直す。
 JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, jobject, jlong h) {
     auto* s = (Stream*)h;
     s->running = true;
     int result = 0;
-    for (auto& sl : s->slots) {
-        if (sl.isFb) fillFb(s, sl); else fillOut(s, sl);
-        if (!submit(s, sl)) { result = -1; s->running = false; break; }
-    }
+    int restarts = 0;
+    int64_t lastOutMs = nowMs();  // 最後に OUT の URB が完了した時刻(フィードバックの完了は数えない)
+
+    auto prime = [&]() {
+        for (auto& sl : s->slots) {
+            if (sl.isFb) fillFb(s, sl); else fillOut(s, sl);
+            if (!submit(s, sl)) return false;
+        }
+        return true;
+    };
+    if (!prime()) { result = -1; s->running = false; }
+
     while (s->running) {
+        // OUT の完了が止まっていたら、状態を出して全 URB を投げ直す(フィードバックは動き続けることがある)。
+        if (nowMs() - lastOutMs > kStallMs) {
+            dumpStall(s, restarts);
+            if (++restarts > kMaxRestarts) { LOGW("giving up after %d restarts", restarts - 1); result = -5; break; }
+            for (auto& sl : s->slots) if (sl.inflight) ioctl(s->fd, USBDEVFS_DISCARDURB, sl.urb);
+            reapAll(s, 500);
+            s->acc = 0;
+            if (!prime()) { result = -6; break; }
+            lastOutMs = nowMs();
+            continue;
+        }
+        pollfd pfd{s->fd, POLLOUT, 0};
+        int pr = poll(&pfd, 1, kPollMs);
+        if (pr < 0 && errno != EINTR) { LOGW("poll failed: errno=%d", errno); result = -2; break; }
+        if (pr <= 0) continue;
+
         usbdevfs_urb* r = nullptr;
         if (ioctl(s->fd, USBDEVFS_REAPURB, &r) < 0) {
             if (errno == EINTR) continue;
@@ -207,12 +283,25 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, j
             if (r->status == -ENODEV || r->status == -ESHUTDOWN || r->status == -EPROTO) { result = -3; break; }
         }
         if (sl->isFb) {
+            s->fbDone++;
             onFeedback(s, *sl);
             fillFb(s, *sl);
         } else {
             {
                 std::lock_guard<std::mutex> g(s->mu);
                 if (sl->gen == s->gen) s->framesPlayed += sl->realFrames;
+            }
+            // 診断: パケット単位のエラーと、約 2 秒ごとの進み具合(8 URB × 4ms で 1 周 32ms → 500 URB ≒ 2 秒)。
+            if (r->error_count > 0 && s->errors++ < 20) {
+                LOGW("iso error_count=%d status=%d first=%d", r->error_count, r->status, r->iso_frame_desc[0].status);
+            }
+            s->lastStart = r->start_frame;
+            lastOutMs = nowMs();
+            if (++s->outDone % 2000 == 0) {
+                LOGI("progress out=%llu fb=%llu played=%lld curQ16=%llu underruns=%d errors=%d start_frame=%u",
+                     (unsigned long long)s->outDone, (unsigned long long)s->fbDone,
+                     (long long)s->framesPlayed.load(), (unsigned long long)s->curQ16,
+                     s->underruns.load(), s->errors.load(), r->start_frame);
             }
             fillOut(s, *sl);
         }
@@ -221,16 +310,8 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, j
     s->running = false;
     // 未完了の URB を取り消して回収する。
     for (auto& sl : s->slots) if (sl.inflight) ioctl(s->fd, USBDEVFS_DISCARDURB, sl.urb);
-    for (int i = 0; i < 100; i++) {
-        usbdevfs_urb* r = nullptr;
-        if (ioctl(s->fd, USBDEVFS_REAPURBNDELAY, &r) < 0) {
-            if (errno == EAGAIN) break;
-            if (errno == EINTR) continue;
-            break;
-        }
-        ((Slot*)r->usercontext)->inflight = false;
-    }
-    LOGI("run end result=%d underruns=%d errors=%d", result, s->underruns.load(), s->errors.load());
+    reapAll(s, 500);
+    LOGI("run end result=%d underruns=%d errors=%d restarts=%d", result, s->underruns.load(), s->errors.load(), restarts);
     return result;
 }
 
@@ -289,6 +370,23 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_freeBytes(JNIE
 
 JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_underruns(JNIEnv*, jobject, jlong h) {
     return ((Stream*)h)->underruns.load();
+}
+
+}  // extern "C"
+
+extern "C" {
+
+// カーネルのドライバ(snd-usb-audio など)をインターフェースに付け直す(libusb の attach_kernel_driver と同じ)。
+// claim でドライバを切り離したままだと、OS の音声出力がこの DAC に出せなくなる。0 以上 = 成功、負 = -errno。
+JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_attachKernelDriver(
+        JNIEnv*, jobject, jint fd, jint ifno) {
+    usbdevfs_ioctl cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.ifno = ifno;
+    cmd.ioctl_code = USBDEVFS_CONNECT;
+    cmd.data = nullptr;
+    int r = ioctl(fd, USBDEVFS_IOCTL, &cmd);
+    return r < 0 ? -errno : r;
 }
 
 }  // extern "C"

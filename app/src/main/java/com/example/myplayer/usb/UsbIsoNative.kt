@@ -18,4 +18,7 @@ object UsbIsoNative {
     external fun framesPlayed(handle: Long): Long
     external fun freeBytes(handle: Long): Int
     external fun underruns(handle: Long): Int
+
+    /** claim で切り離したカーネルのドライバを付け直す。0 以上 = 成功、負 = -errno。 */
+    external fun attachKernelDriver(fd: Int, interfaceNumber: Int): Int
 }

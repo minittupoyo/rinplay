@@ -55,7 +55,7 @@ class UsbOutput private constructor(
         else UsbIsoNative.destroy(handle)
         synchronized(lock) {
             closed = true
-            for (i in claimed) conn.releaseInterface(i)
+            releaseAll(conn, claimed)
             conn.close()
         }
         alive = false
@@ -63,6 +63,19 @@ class UsbOutput private constructor(
 
     companion object {
         private const val TAG = "UsbOutput"
+
+        /** claim を解き、切り離したカーネルのドライバを付け直す(OS の音声出力を戻す)。接続は閉じない。 */
+        private fun releaseAll(conn: UsbDeviceConnection, claimed: List<UsbInterface>) {
+            val fd = conn.fileDescriptor
+            // AS → AC の順に解放する。AC を解放した時点で、カーネルのドライバ(snd-usb-audio)が自動で付き直り、
+            // そのとき AS も掴むので、AS を先に空けておく。AC を先に解放すると、AS を握られたまま付き直って、
+            // カードが不完全になる(OS 経由の再生が途切れる)。
+            for (i in claimed.asReversed()) conn.releaseInterface(i)
+            // 自動で付き直らなかったときのための保険(付いていれば EBUSY で何もしない)。
+            for (i in claimed) {
+                Log.i(TAG, "reattach kernel driver if=${i.id} -> ${UsbIsoNative.attachKernelDriver(fd, i.id)}")
+            }
+        }
 
         /** 入力の 1 サンプルのビット数 [bits] 以上で、一番近い PCM の alt を選ぶ(ステレオのみ)。 */
         private fun pickAlt(d: UacDescriptor, bits: Int): AsAlt? =
@@ -78,13 +91,17 @@ class UsbOutput private constructor(
             val claimed = mutableListOf<UsbInterface>()
             fun fail(msg: String): UsbOutput? {
                 Log.w(TAG, msg)
-                for (i in claimed) conn.releaseInterface(i)
+                releaseAll(conn, claimed)
                 conn.close()
                 return null
             }
 
             val desc = parseUac2(conn.rawDescriptors) ?: return fail("not UAC2")
             val alt = pickAlt(desc, bits) ?: return fail("no alt for ${bits}bit")
+            // 音量を操作できない DAC は、最大音量で鳴りうるので、設定で許可されたときだけ使う(DAC 側のダイヤルなどで調整する機種向け)。
+            // claim(カーネルのドライバの切り離し)の前に判定する。
+            val hasVolume = desc.featureUnitId >= 0 && desc.volumeChannels.isNotEmpty()
+            if (!hasVolume && !UsbVolume.allowFixed.value) return fail("no DAC volume control (featureUnit=${desc.featureUnitId})")
             if (alt.feedbackEndpoint == 0) return fail("no feedback endpoint (implicit feedback is unsupported)")
             val ifaces = (0 until device.interfaceCount).map { device.getInterface(it) }
             val ac = ifaces.first { it.id == desc.acInterface }
@@ -100,10 +117,18 @@ class UsbOutput private constructor(
             if (ranges.none { rate in it.first..it.second }) return fail("rate $rate unsupported: $ranges")
 
             // 音を出す前に DAC の音量を下げる。下げられないなら、最大音量で鳴りうるので USB 直結は使わない。
-            val range = UsbDac.queryVolumeRange(conn, desc) ?: return fail("no DAC volume control (featureUnit=${desc.featureUnitId} ch=${desc.volumeChannels})")
-            val volume = UsbVolume.snap(range, UsbVolume.startVolume())
-            if (!UsbDac.setVolume(conn, desc, volume)) return fail("cannot set DAC volume")
-            Log.i(TAG, "volume range=${range.min / 256.0}..${range.max / 256.0}dB set=${volume / 256.0}dB")
+            // 音量を操作できない DAC(許可された場合)は、アプリでは音量を触らない(スライダーも出さない)。
+            var range: UsbDac.VolumeRange? = null
+            var volume = 0
+            if (hasVolume) {
+                val r = UsbDac.queryVolumeRange(conn, desc) ?: return fail("no DAC volume control (featureUnit=${desc.featureUnitId} ch=${desc.volumeChannels})")
+                volume = UsbVolume.snap(r, UsbVolume.startVolume())
+                if (!UsbDac.setVolume(conn, desc, volume)) return fail("cannot set DAC volume")
+                range = r
+                Log.i(TAG, "volume range=${r.min / 256.0}..${r.max / 256.0}dB set=${volume / 256.0}dB")
+            } else {
+                Log.i(TAG, "DAC has no volume control; the volume is set on the DAC itself")
+            }
 
             // 帯域ゼロの alt 0 にしてからクロックを変える。
             conn.setInterface(asZero)
