@@ -16,6 +16,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -29,7 +32,10 @@ import org.jupnp.model.meta.Service
 import org.jupnp.model.types.UDAServiceType
 import org.jupnp.registry.DefaultRegistryListener
 import org.jupnp.registry.Registry
+import org.jupnp.controlpoint.ActionCallback
 import org.jupnp.support.contentdirectory.callback.Browse
+import org.jupnp.support.contentdirectory.callback.Search
+import org.jupnp.support.model.SearchResult
 import org.jupnp.support.model.BrowseFlag
 import org.jupnp.support.model.BrowseResult
 import org.jupnp.support.model.DIDLContent
@@ -54,6 +60,15 @@ data class DlnaEntry(
     /** アルバムのアーティスト、または曲のアーティスト */
     val artistName: String? = null,
     val albumTitle: String? = null,
+)
+
+/** 検索結果。アーティスト・アルバム・曲に分けて持つ。 */
+data class DlnaSearchResults(
+    val artists: List<DlnaEntry>,
+    val albums: List<DlnaEntry>,
+    val tracks: List<DlnaEntry>,
+    /** 曲が検索の上限件数を超えていて、すべては取れていない */
+    val tracksTruncated: Boolean,
 )
 
 /** 一覧の行の種類。UPnP クラス(object.container.album.musicAlbum など)で判定する。 */
@@ -249,6 +264,58 @@ class DlnaRepository(private val context: Context) {
         queueJob = null
     }
 
+    /**
+     * サーバーの Search で、アーティスト・アルバム・曲を探す。
+     * 検索式はプロパティごとに 1 つずつ投げて結果を統合する(or や括弧に対応しないサーバーでも通りやすくするため)。
+     * サーバーが対応するプロパティ(GetSearchCapabilities)だけを使う。検索に非対応なら失敗を返す。
+     */
+    suspend fun searchLibrary(server: DlnaServer, query: String): Result<DlnaSearchResults> {
+        val caps = capsCache.getOrPut(server.udn) {
+            searchCapabilities(server).orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        }
+        if (caps.isEmpty()) return Result.failure(UnsupportedOperationException("このサーバーは検索に対応していません"))
+
+        // 検索式の文字列は、" と \ をバックスラッシュでエスケープする。
+        val q = query.trim().replace("\\", "\\\\").replace("\"", "\\\"")
+        fun criteria(clazz: String, property: String) =
+            "upnp:class derivedfrom \"$clazz\" and $property contains \"$q\""
+
+        return coroutineScope {
+            fun startSearches(clazz: String, limit: Long, vararg properties: String) =
+                properties.filter { it in caps }.map { p ->
+                    async { searchObjects(server, "0", criteria(clazz, p), 0L, limit) }
+                }
+
+            val artistJobs = startSearches(CLASS_MUSIC_ARTIST, SEARCH_LIMIT_CONTAINERS, "dc:title")
+            val albumJobs = startSearches(CLASS_MUSIC_ALBUM, SEARCH_LIMIT_CONTAINERS, "dc:title", "upnp:artist")
+            val trackJobs = startSearches(CLASS_AUDIO_ITEM, SEARCH_LIMIT_TRACKS, "dc:title", "upnp:artist", "upnp:album")
+
+            val artists = artistJobs.awaitAll()
+            val albums = albumJobs.awaitAll()
+            val tracks = trackJobs.awaitAll()
+            val all = artists + albums + tracks
+            if (all.isNotEmpty() && all.all { it.isFailure }) {
+                return@coroutineScope Result.failure(all.first().exceptionOrNull() ?: RuntimeException("検索に失敗"))
+            }
+
+            /** 成功したページの項目を、id の重複を除いてまとめる。 */
+            fun merge(results: List<Result<DlnaPage>>) = results.mapNotNull { it.getOrNull() }
+                .flatMap { it.entries }.distinctBy { it.id }
+            // 件数が上限を超えた分は取れていない。画面に「他にもある」と出すために覚えておく。
+            fun truncated(results: List<Result<DlnaPage>>) =
+                results.mapNotNull { it.getOrNull() }.any { it.totalMatches > it.objectCount }
+
+            Result.success(
+                DlnaSearchResults(
+                    artists = merge(artists),
+                    albums = merge(albums),
+                    tracks = merge(tracks),
+                    tracksTruncated = truncated(tracks),
+                ),
+            )
+        }
+    }
+
     private fun DIDLContent.toEntries(): List<DlnaEntry> {
         val folders = containers.map {
             val clazz = it.clazz?.value.orEmpty()
@@ -323,14 +390,80 @@ class DlnaRepository(private val context: Context) {
 
     private fun String.norm() = trim().lowercase()
 
+    /** GetSearchCapabilities。検索に使えるプロパティ(カンマ区切り)。検索に非対応なら null。 */
+    suspend fun searchCapabilities(server: DlnaServer): String? {
+        val control = upnp?.controlPoint ?: return null
+        val action = server.service.getAction("GetSearchCapabilities") ?: return null
+        return suspendCancellableCoroutine { cont ->
+            val callback = object : ActionCallback(ActionInvocation(action)) {
+                override fun success(invocation: ActionInvocation<*>) {
+                    if (cont.isActive) cont.resume(invocation.getOutput("SearchCaps")?.value?.toString())
+                }
+
+                override fun failure(invocation: ActionInvocation<*>, operation: UpnpResponse?, defaultMsg: String?) {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+            val future = control.execute(callback)
+            cont.invokeOnCancellation { future.cancel(true) }
+        }
+    }
+
+    /** Search アクション。[criteria] は UPnP の検索式(例: `dc:title contains "abc"`)。 */
+    suspend fun searchObjects(
+        server: DlnaServer,
+        containerId: String,
+        criteria: String,
+        startIndex: Long = 0L,
+        count: Long = DLNA_PAGE_SIZE,
+    ): Result<DlnaPage> {
+        val control = upnp?.controlPoint
+            ?: return Result.failure(IllegalStateException("UPnP サービス未接続"))
+        return suspendCancellableCoroutine { cont ->
+            val callback = object : Search(server.service, containerId, criteria, "*", startIndex, count) {
+                private var totalMatches = 0L
+
+                override fun receivedRaw(invocation: ActionInvocation<*>, searchResult: SearchResult): Boolean {
+                    totalMatches = searchResult.totalMatchesLong
+                    return true
+                }
+
+                override fun received(invocation: ActionInvocation<*>, didl: DIDLContent) {
+                    val page = DlnaPage(
+                        entries = didl.toEntries(),
+                        objectCount = (didl.containers.size + didl.items.size).toLong(),
+                        totalMatches = totalMatches,
+                    )
+                    Log.i(TAG, "search [$criteria] start=$startIndex -> objects=${page.objectCount} total=${page.totalMatches}")
+                    if (cont.isActive) cont.resume(Result.success(page))
+                }
+
+                override fun updateStatus(status: Status) = Unit
+
+                override fun failure(invocation: ActionInvocation<*>, operation: UpnpResponse?, defaultMsg: String?) {
+                    Log.i(TAG, "search [$criteria] failed: $defaultMsg")
+                    if (cont.isActive) {
+                        cont.resume(Result.failure(RuntimeException(defaultMsg ?: "Search に失敗")))
+                    }
+                }
+            }
+            val future = control.execute(callback)
+            cont.invokeOnCancellation { future.cancel(true) }
+        }
+    }
+
     /** DIDL の upnp:albumArtURI。無ければ null。 */
     private fun DIDLObject.artworkUrl(): String? =
         getFirstPropertyValue(DIDLObject.Property.UPNP.ALBUM_ART_URI::class.java)?.toString()
 
     private val homeCache = mutableMapOf<String, DlnaMusicHome?>()
+    private val capsCache = mutableMapOf<String, Set<String>>()
 
     private companion object {
         const val TAG = "Dlna"
+        const val CLASS_AUDIO_ITEM = "object.item.audioItem"
+        const val SEARCH_LIMIT_CONTAINERS = 100L
+        const val SEARCH_LIMIT_TRACKS = 200L
         const val CLASS_MUSIC_ALBUM = "object.container.album.musicAlbum"
         const val CLASS_MUSIC_ARTIST = "object.container.person.musicArtist"
         val MUSIC_TITLES = setOf("music", "ミュージック", "音楽", "音楽ライブラリ")

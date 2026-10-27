@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -39,7 +40,10 @@ fun LocalLibraryScreen(
     modifier: Modifier = Modifier,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var query by rememberSaveable { mutableStateOf("") }
     val stack = remember { mutableStateListOf<LocalView>() }
+    // 検索結果。アルバムやアーティストを開いて戻っても、検索語が残っていれば結果に戻る。
+    val results = remember(library, query) { library.search(query) }
     BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
 
     fun play(tracks: List<LocalTrack>, index: Int) {
@@ -51,17 +55,26 @@ fun LocalLibraryScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        SearchField(query, onQueryChange = { query = it })
         Row(modifier = Modifier.padding(horizontal = 8.dp)) {
             TAB_LABELS.forEachIndexed { index, label ->
                 TextButton(onClick = {
                     tab = index
                     stack.clear()
-                }) { Text(if (tab == index) "● $label" else label) }
+                    query = ""
+                }) { Text(if (tab == index && query.isBlank()) "● $label" else label) }
             }
         }
 
         when (val view = stack.lastOrNull()) {
-            null -> when (tab) {
+            null -> if (query.isNotBlank()) {
+                SearchResultsList(
+                    results,
+                    onOpenArtist = { stack.add(LocalView.ArtistAlbums(it)) },
+                    onOpenAlbum = { stack.add(LocalView.AlbumTracks(it)) },
+                    onPlay = ::play,
+                )
+            } else when (tab) {
                 0 -> TrackList(library.tracks, showAlbum = true, onPlay = ::play)
                 1 -> AlbumList(library.albums, onOpen = { stack.add(LocalView.AlbumTracks(it)) })
                 else -> ArtistList(library, onOpen = { stack.add(LocalView.ArtistAlbums(it)) })
@@ -145,6 +158,57 @@ private fun ArtistList(library: LocalLibrary, onOpen: (LocalArtist) -> Unit) {
                 placeholder = "👤",
                 onClick = { onOpen(artist) },
             )
+        }
+    }
+}
+
+@Composable
+private fun SearchResultsList(
+    results: LocalSearchResults,
+    onOpenArtist: (LocalArtist) -> Unit,
+    onOpenAlbum: (LocalAlbum) -> Unit,
+    onPlay: (List<LocalTrack>, Int) -> Unit,
+) {
+    if (results.artists.isEmpty() && results.albums.isEmpty() && results.tracks.isEmpty()) {
+        Text("見つかりません", modifier = Modifier.padding(16.dp))
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        if (results.artists.isNotEmpty()) {
+            item(key = "header:artists") { SectionHeader("アーティスト(${results.artists.size})") }
+            items(results.artists, key = { "artist:${it.name}" }) { artist ->
+                LibraryRow(
+                    title = artist.name,
+                    subtitle = "${artist.albumCount}枚 · ${artist.trackCount}曲",
+                    artwork = albumArtUri(artist.artworkAlbumId),
+                    placeholder = "👤",
+                    onClick = { onOpenArtist(artist) },
+                )
+            }
+        }
+        if (results.albums.isNotEmpty()) {
+            item(key = "header:albums") { SectionHeader("アルバム(${results.albums.size})") }
+            items(results.albums, key = { "album:${it.id}" }) { album ->
+                LibraryRow(
+                    title = album.title,
+                    subtitle = "${album.artist} · ${album.trackCount}曲",
+                    artwork = albumArtUri(album.id),
+                    placeholder = "💿",
+                    onClick = { onOpenAlbum(album) },
+                )
+            }
+        }
+        if (results.tracks.isNotEmpty()) {
+            item(key = "header:tracks") { SectionHeader("曲(${results.tracks.size})") }
+            itemsIndexed(results.tracks, key = { _, track -> "track:${track.item.mediaId}" }) { index, track ->
+                LibraryRow(
+                    title = track.item.mediaMetadata.title?.toString().orEmpty(),
+                    subtitle = "${track.artist} — ${track.album}",
+                    artwork = track.item.mediaMetadata.artworkUri,
+                    placeholder = "♪",
+                    onClick = { onPlay(results.tracks, index) },
+                )
+            }
         }
     }
 }

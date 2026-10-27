@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,11 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.session.MediaController
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 
 /** 末尾から何件手前で次のページを読み始めるか。 */
 private const val PREFETCH = 20
+
+/** 入力が止まってから検索を始めるまでの待ち時間。 */
+private const val SEARCH_DEBOUNCE_MS = 400L
 
 @Composable
 fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifier: Modifier = Modifier) {
@@ -50,6 +55,33 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    // 検索。入力が止まってからサーバーの Search を呼ぶ。サーバーを変えたら検索語は消す。
+    var query by remember { mutableStateOf("") }
+    var searchResults by remember { mutableStateOf<DlnaSearchResults?>(null) }
+    var searching by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(server?.udn) { query = "" }
+    LaunchedEffect(server?.udn, query) {
+        val s = server
+        if (s == null || query.isBlank()) {
+            searchResults = null
+            searchError = null
+            searching = false
+            return@LaunchedEffect
+        }
+        delay(SEARCH_DEBOUNCE_MS)
+        searching = true
+        searchError = null
+        repository.searchLibrary(s, query)
+            .onSuccess { searchResults = it }
+            .onFailure {
+                searchResults = null
+                searchError = it.message
+            }
+        searching = false
+    }
+    val showingSearch = server != null && path.isEmpty() && query.isNotBlank()
 
     // サーバーの音楽ライブラリの入口(Music と、曲/アルバム/アーティストの場所)。
     // 探し終わるまで(homeResolved が false の間)は一覧を読まない。ルートを読んでから読み直すのを避けるため。
@@ -168,6 +200,14 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
             TextButton(onClick = { repository.search() }) { Text("再検索") }
         }
 
+        // 検索語を入れたら、いま開いているフォルダから抜けて検索結果を出す(結果から開いて戻れば結果に戻る)。
+        if (server != null) {
+            SearchField(query, onQueryChange = {
+                query = it
+                if (it.isNotBlank()) path.clear()
+            })
+        }
+
         // 音楽ライブラリの入口が見つかったサーバーでは、ローカルと同じ「曲 / アルバム / アーティスト」を出す。
         val library = home
         if (server != null && library != null) {
@@ -179,10 +219,11 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                 else -> 0
             }
             Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                DlnaTab("ホーム", tab == 0) { path.clear() }
-                library.songs?.let { c -> DlnaTab("曲", tab == 1) { path.clear(); path.add(c) } }
-                library.albums?.let { c -> DlnaTab("アルバム", tab == 2) { path.clear(); path.add(c) } }
-                library.artists?.let { c -> DlnaTab("アーティスト", tab == 3) { path.clear(); path.add(c) } }
+                val selected = { index: Int -> tab == index && !showingSearch }
+                DlnaTab("ホーム", selected(0)) { query = ""; path.clear() }
+                library.songs?.let { c -> DlnaTab("曲", selected(1)) { query = ""; path.clear(); path.add(c) } }
+                library.albums?.let { c -> DlnaTab("アルバム", selected(2)) { query = ""; path.clear(); path.add(c) } }
+                library.artists?.let { c -> DlnaTab("アーティスト", selected(3)) { query = ""; path.clear(); path.add(c) } }
             }
         }
 
@@ -193,8 +234,10 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
         }
-        error?.let { Text("エラー: $it", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
-        if (loading) Text("読み込み中…", modifier = Modifier.padding(16.dp))
+        if (!showingSearch) {
+            error?.let { Text("エラー: $it", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+            if (loading) Text("読み込み中…", modifier = Modifier.padding(16.dp))
+        }
 
         if (server == null) {
             if (servers.isEmpty()) {
@@ -211,6 +254,22 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                     )
                 }
             }
+        } else if (showingSearch) {
+            DlnaSearchResultsView(
+                results = searchResults,
+                searching = searching,
+                error = searchError,
+                onOpen = { path.add(Crumb(it.id, it.title)) },
+                onPlay = { tracks, index ->
+                    val ctrl = controller
+                    if (ctrl != null) {
+                        repository.cancelQueueLoading()
+                        ctrl.setMediaItems(tracks.mapNotNull { it.mediaItem }, index, 0L)
+                        ctrl.prepare()
+                        ctrl.play()
+                    }
+                },
+            )
         } else {
             // 曲がすべて同じアルバムなら、補足にアルバム名は出さない(アルバムを開いた画面)。
             val singleAlbum = remember(entries) {
@@ -271,4 +330,61 @@ private fun entrySubtitle(entry: DlnaEntry, singleAlbum: Boolean): String? = whe
     entry.isContainer -> entry.childCount?.let { "${it}件" }
     singleAlbum || entry.albumTitle.isNullOrEmpty() -> entry.artistName
     else -> listOfNotNull(entry.artistName, entry.albumTitle).joinToString(" — ")
+}
+
+/** 検索結果の表示。アーティスト → アルバム → 曲の順。曲は読み込めた分をそのままキューにする。 */
+@Composable
+private fun DlnaSearchResultsView(
+    results: DlnaSearchResults?,
+    searching: Boolean,
+    error: String?,
+    onOpen: (DlnaEntry) -> Unit,
+    onPlay: (List<DlnaEntry>, Int) -> Unit,
+) {
+    if (error != null) {
+        Text("エラー: $error", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        return
+    }
+    if (results == null) {
+        if (searching) Text("検索中…", modifier = Modifier.padding(16.dp))
+        return
+    }
+    if (results.artists.isEmpty() && results.albums.isEmpty() && results.tracks.isEmpty()) {
+        Text(if (searching) "検索中…" else "見つかりません", modifier = Modifier.padding(16.dp))
+        return
+    }
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        if (searching) item(key = "searching") { Text("検索中…", modifier = Modifier.padding(horizontal = 16.dp)) }
+        if (results.artists.isNotEmpty()) {
+            item(key = "header:artists") { SectionHeader("アーティスト(${results.artists.size})") }
+            items(results.artists, key = { "artist:${it.id}" }) { entry -> SearchRow(entry, singleAlbum = false) { onOpen(entry) } }
+        }
+        if (results.albums.isNotEmpty()) {
+            item(key = "header:albums") { SectionHeader("アルバム(${results.albums.size})") }
+            items(results.albums, key = { "album:${it.id}" }) { entry -> SearchRow(entry, singleAlbum = false) { onOpen(entry) } }
+        }
+        if (results.tracks.isNotEmpty()) {
+            val more = if (results.tracksTruncated) "+" else ""
+            item(key = "header:tracks") { SectionHeader("曲(${results.tracks.size}$more)") }
+            itemsIndexed(results.tracks, key = { _, entry -> "track:${entry.id}" }) { index, entry ->
+                SearchRow(entry, singleAlbum = false) { onPlay(results.tracks, index) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchRow(entry: DlnaEntry, singleAlbum: Boolean, onClick: () -> Unit) {
+    LibraryRow(
+        title = entry.title,
+        subtitle = entrySubtitle(entry, singleAlbum),
+        artwork = entry.artworkUri,
+        placeholder = when (entry.kind) {
+            DlnaKind.ALBUM -> "💿"
+            DlnaKind.ARTIST -> "👤"
+            DlnaKind.FOLDER -> "📁"
+            DlnaKind.TRACK -> "♪"
+        },
+        onClick = onClick,
+    )
 }
