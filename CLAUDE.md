@@ -13,7 +13,8 @@
 - 無線デバッグ: USB 接続中に `adb tcpip 5555` → `adb connect <端末IP>:5555`。端末の再起動や IP 変更で切れる(IP は DHCP)
 - パッケージ名: `com.example.myplayer`(変更したらここも更新)
 - USB接続中は `adb shell svc power stayon usb` で画面点灯を維持
-- テスト音源: `/sdcard/Music/` に FLAC 4 つ(44.1k/16, 48k/16, 88.2k/24, 96k/24)。ffmpeg で生成した正弦波
+- テスト音源: `/sdcard/Music/` に FLAC 4 つ(44.1k/16, 48k/16, 88.2k/24, 96k/24)。ffmpeg で生成した正弦波(タグなし。アルバム名はフォルダ名の `Music`、アーティストは `Generated` になる)
+- ライブラリ表示の確認用: `/sdcard/Music/TestAlbums/` に、ジャケット埋め込み・タグ付きの FLAC 5 つ(`Blue Album` / Artist A が 3 曲、`Red Album` / Artist B が 2 曲)。ffmpeg の `-disposition:v attached_pic` で画像を埋めた
 
 ## よく使うコマンド
 - ビルド+インストール: `./gradlew installDebug`
@@ -61,10 +62,19 @@
 - 最後に開いたサーバー(UDN)とフォルダ階層(ID+タイトル)は `DlnaPrefs`(SharedPreferences `dlna`)に保存する。DLNA タブを開いて該当サーバーが検出されたとき 1 度だけ復元する。復元の判断が済むまでは保存しない(起動直後の空状態で上書きしないため)。サーバー一覧に戻っても最後のサーバーは残る(階層は空になる)
 - 保存内容の確認: `adb shell run-as com.example.myplayer cat shared_prefs/dlna.xml`(debug ビルド)
 
+### ライブラリ(一覧・ジャケット)
+- ローカル: `MusicRepository.load()` が MediaStore を 1 回読み、`LocalLibrary`(曲・アルバム・アーティスト)を作る。画面は `LocalLibraryScreen`(曲 / アルバム / アーティストの切り替え。アルバム・アーティストを開くと階層移動し、戻るキーで 1 つ戻る)
+- アーティストは「アルバムアーティスト(API 30+)、なければ曲のアーティスト」でまとめる。値が `<unknown>` や空なら `不明なアーティスト` / `不明なアルバム`。アルバム内はトラック番号順
+- ローカルのジャケットは `content://media/external/audio/albumart/<ALBUM_ID>`(Android 17 でも Coil で読めることを実機で確認)。同じ URI を `MediaMetadata.artworkUri` に入れ、再生バーと通知で使う
+- DLNA のジャケットは DIDL の `upnp:albumArtURI`(`DlnaEntry.artworkUri`)。`Music Server` は返す。サーバーによっては返さないので、無ければプレースホルダー
+- 画像の読み込みは Coil 3(`coil-compose` + `coil-network-okhttp`。http(s) には後者が必要。平文 http は `usesCleartextTraffic=true` で許可)
+- 一覧の行は `LibraryRow`、画像は `Artwork`(`LibraryRow.kt`)でローカルと DLNA を共通化。再生バーは埋め込みジャケット(`artworkData`)を優先し、なければ `artworkUri`
+
 ### その他
 - 依存バージョンは libs.versions.toml で一元管理
 
 ## 未確認・未実装
+- ライブラリ: 検索、並べ替え、フォルダ別表示は未実装。ローカルは起動時に全曲を一括で読む(数千曲規模での速度は未確認)。通知のジャケットは単色画像での確認のみ(実画像では未確認)
 - 音が実際に出ているかの聴感確認、ロック画面からの操作、通知のシークバー操作
 - DLNA: 実際に 500 件を超えるフォルダ(ページ送りはページサイズ 20 で 50 件を 3 ページに分けて確認済み)、ローカル/DLNA タブの記憶。保存したフォルダが消えている場合・保存済みサーバーが見つからない場合の挙動
 - DLNA: サーバーが 1 回の返却件数を絞り、かつ全件数が残り件数のとき(`hasMore` の取りこぼし)

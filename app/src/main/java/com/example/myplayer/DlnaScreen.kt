@@ -179,29 +179,29 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(entries, key = { it.id }) { entry ->
-                    Text(
-                        text = if (entry.isContainer) "📁 ${entry.title}" else entry.title,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                if (entry.isContainer) {
-                                    path.add(Crumb(entry.id, entry.title))
-                                } else {
-                                    val ctrl = controller ?: return@clickable
-                                    val queue = entries.filter { !it.isContainer }
-                                    repository.cancelQueueLoading()
-                                    ctrl.setMediaItems(queue.mapNotNull { it.mediaItem }, queue.indexOf(entry), 0L)
-                                    ctrl.prepare()
-                                    ctrl.play()
-                                    // 続きのページがあれば、裏で読み込んでキューに足す。
-                                    if (hasMore) {
-                                        server?.let {
-                                            repository.appendRemainingToQueue(it, currentId ?: "0", loadedCount, ctrl)
-                                        }
+                    LibraryRow(
+                        title = entry.title,
+                        subtitle = entry.subtitle,
+                        artwork = entry.artworkUri,
+                        placeholder = if (entry.isContainer) "📁" else "♪",
+                        onClick = {
+                            val ctrl = controller
+                            if (entry.isContainer) {
+                                path.add(Crumb(entry.id, entry.title))
+                            } else if (ctrl != null) {
+                                val queue = entries.filter { !it.isContainer }
+                                repository.cancelQueueLoading()
+                                ctrl.setMediaItems(queue.mapNotNull { it.mediaItem }, queue.indexOf(entry), 0L)
+                                ctrl.prepare()
+                                ctrl.play()
+                                // 続きのページがあれば、裏で読み込んでキューに足す。
+                                if (hasMore) {
+                                    server?.let {
+                                        repository.appendRemainingToQueue(it, currentId ?: "0", loadedCount, ctrl)
                                     }
                                 }
                             }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        },
                     )
                 }
                 if (loadingMore) {

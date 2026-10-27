@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.IBinder
 import android.util.Log
@@ -32,6 +33,7 @@ import org.jupnp.support.contentdirectory.callback.Browse
 import org.jupnp.support.model.BrowseFlag
 import org.jupnp.support.model.BrowseResult
 import org.jupnp.support.model.DIDLContent
+import org.jupnp.support.model.DIDLObject
 import org.jupnp.support.model.item.MusicTrack
 import kotlin.coroutines.resume
 
@@ -43,6 +45,10 @@ data class DlnaEntry(
     /** フォルダなら true。false のとき [mediaItem] が再生対象。 */
     val isContainer: Boolean,
     val mediaItem: MediaItem? = null,
+    /** 一覧に出す補足(曲ならアーティスト)。 */
+    val subtitle: String? = null,
+    /** ジャケット画像の URL(DIDL の upnp:albumArtURI)。サーバーが返さなければ null。 */
+    val artworkUri: String? = null,
 )
 
 /** 1 回の Browse で取得する件数。 */
@@ -225,12 +231,16 @@ class DlnaRepository(private val context: Context) {
     }
 
     private fun DIDLContent.toEntries(): List<DlnaEntry> {
-        val folders = containers.map { DlnaEntry(it.id, it.title.orEmpty(), isContainer = true) }
+        val folders = containers.map {
+            DlnaEntry(it.id, it.title.orEmpty(), isContainer = true, artworkUri = it.artworkUrl())
+        }
         val tracks = items.mapNotNull { item ->
             val res = item.resources.firstOrNull { it.protocolInfo?.contentFormat?.startsWith("audio/") == true }
                 ?: item.firstResource
                 ?: return@mapNotNull null
             val track = item as? MusicTrack
+            val artist = track?.firstArtist?.name ?: item.creator
+            val artwork = item.artworkUrl()
             val mediaItem = MediaItem.Builder()
                 .setMediaId("dlna:${item.id}")
                 .setUri(res.value)
@@ -238,15 +248,27 @@ class DlnaRepository(private val context: Context) {
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(item.title)
-                        .setArtist(track?.firstArtist?.name ?: item.creator)
+                        .setArtist(artist)
                         .setAlbumTitle(track?.album)
+                        .setArtworkUri(artwork?.let(Uri::parse))
                         .build(),
                 )
                 .build()
-            DlnaEntry(item.id, item.title.orEmpty(), isContainer = false, mediaItem = mediaItem)
+            DlnaEntry(
+                id = item.id,
+                title = item.title.orEmpty(),
+                isContainer = false,
+                mediaItem = mediaItem,
+                subtitle = artist,
+                artworkUri = artwork,
+            )
         }
         return folders + tracks
     }
+
+    /** DIDL の upnp:albumArtURI。無ければ null。 */
+    private fun DIDLObject.artworkUrl(): String? =
+        getFirstPropertyValue(DIDLObject.Property.UPNP.ALBUM_ART_URI::class.java)?.toString()
 
     private companion object {
         const val TAG = "Dlna"

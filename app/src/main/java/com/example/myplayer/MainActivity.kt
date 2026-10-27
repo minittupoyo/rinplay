@@ -9,15 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 
@@ -115,9 +111,9 @@ private fun PlayerScreen() {
     }
     var tab by remember { mutableIntStateOf(0) }
 
-    var songs by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
+    var library by remember { mutableStateOf(LocalLibrary.EMPTY) }
     LaunchedEffect(granted) {
-        if (granted) songs = MusicRepository(context).loadAll()
+        if (granted) library = MusicRepository(context).load()
     }
 
     val format by OutputFormatState.format.collectAsState()
@@ -139,33 +135,16 @@ private fun PlayerScreen() {
             DlnaScreen(dlna, controller, modifier = Modifier.weight(1f))
         } else if (!granted) {
             Text("音楽ファイルへのアクセス権限が必要です", modifier = Modifier.padding(16.dp))
-        } else if (songs.isEmpty()) {
+        } else if (library.tracks.isEmpty()) {
             Text("曲が見つかりません", modifier = Modifier.padding(16.dp))
         } else {
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                itemsIndexed(songs, key = { _, item -> item.mediaId }) { index, item ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                // DLNA の続きページをキューに足している最中なら止める(ローカル曲に混ざらないように)。
-                                dlna.cancelQueueLoading()
-                                controller?.run {
-                                    setMediaItems(songs, index, 0L)
-                                    prepare()
-                                    play()
-                                }
-                            }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                    ) {
-                        Text(item.mediaMetadata.title?.toString().orEmpty())
-                        Text(
-                            item.mediaMetadata.artist?.toString().orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
-            }
+            LocalLibraryScreen(
+                library = library,
+                controller = controller,
+                // DLNA の続きページをキューに足している最中なら止める(ローカル曲に混ざらないように)。
+                onPlayStarted = { dlna.cancelQueueLoading() },
+                modifier = Modifier.weight(1f),
+            )
         }
         controller?.let { NowPlayingBar(it) }
     }

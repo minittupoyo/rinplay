@@ -29,6 +29,8 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
     implementation(libs.guava.android)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.jupnp)
     implementation(libs.jupnp.android)
     implementation(libs.jupnp.support)

@@ -3,7 +3,9 @@ package com.example.myplayer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -70,11 +73,27 @@ fun NowPlayingBar(controller: MediaController, modifier: Modifier = Modifier) {
 
     Surface(tonalElevation = 3.dp, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(
-                text = metadata?.title?.toString() ?: "停止中",
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 埋め込みジャケット(ストリームから取れた場合)を優先し、なければ URI を使う。
+                Artwork(metadata?.artworkData ?: metadata?.artworkUri, placeholder = "♪", size = 44.dp)
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = metadata?.title?.toString() ?: "停止中",
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    metadata?.artist?.toString()?.takeIf { it.isNotEmpty() }?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             Slider(
                 value = if (knownDuration > 0) positionMs.coerceIn(0L, knownDuration).toFloat() else 0f,
                 onValueChange = {
