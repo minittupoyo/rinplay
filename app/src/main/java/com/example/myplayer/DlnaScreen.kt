@@ -23,19 +23,41 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.session.MediaController
 
-private data class Crumb(val id: String, val title: String)
-
 @Composable
 fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val prefs = remember { DlnaPrefs(context.applicationContext) }
     val servers by repository.servers.collectAsState()
     var server by remember { mutableStateOf<DlnaServer?>(null) }
     val path = remember { mutableStateListOf<Crumb>() }
     var entries by remember { mutableStateOf<List<DlnaEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    // 前回開いていた場所は、サーバーが検出されたら 1 度だけ復元する。
+    // 手動で選んだあとは復元しない。保存も復元の判断が済んでから行う(null で上書きしないため)。
+    var restoreDone by remember { mutableStateOf(false) }
+    LaunchedEffect(servers) {
+        if (restoreDone) return@LaunchedEffect
+        val saved = prefs.load()
+        if (saved == null) {
+            restoreDone = true
+            return@LaunchedEffect
+        }
+        val match = servers.firstOrNull { it.udn == saved.serverUdn } ?: return@LaunchedEffect
+        server = match
+        path.clear()
+        path.addAll(saved.path)
+        restoreDone = true
+    }
+    LaunchedEffect(server?.udn, path.toList(), restoreDone) {
+        val s = server
+        if (restoreDone && s != null) prefs.save(DlnaPlace(s.udn, path.toList()))
+    }
 
     // サーバーが一覧から消えたら選択を解除する。
     LaunchedEffect(servers) {
@@ -88,7 +110,10 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                 items(servers, key = { it.udn }) { s ->
                     Text(
                         s.name,
-                        modifier = Modifier.fillMaxWidth().clickable { server = s }.padding(16.dp),
+                        modifier = Modifier.fillMaxWidth().clickable {
+                            restoreDone = true
+                            server = s
+                        }.padding(16.dp),
                     )
                 }
             }

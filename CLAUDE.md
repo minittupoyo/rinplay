@@ -47,6 +47,7 @@
 - この端末の USB 出力ミキサーはレート固定で、曲に追従しない。48kHz と 96kHz のスレッドのみ。48k/96k はレート一致、44.1k は 48k に、88.2k は 96k にリサンプルされる(実測)
 
 ### DLNA(jUPnP)
+- 自宅 LAN の検出結果: `Music Server`(音楽あり。動作確認はこちら)、`rec`(HDD レコーダー。音楽は入っていない)。`rec` は音楽の確認対象外
 - 検出には `WifiManager.MulticastLock` が必要(`DlnaRepository.start()` で取得)
 - 標準の `AndroidUpnpServiceConfiguration` は Jetty に依存し、Android 上で `NoClassDefFoundError: org/eclipse/jetty/server/Server` で落ちる。`MyUpnpService`/`MyUpnpConfiguration`(`dlna/`)で、HTTP クライアントを `HttpURLConnection` 版(`HttpUrlStreamClient`)に差し替え、サーバー(`createStreamServer`)は `null`。このため SUBSCRIBE(イベント購読)は未対応
 - slf4j は 2.x 系の `uk.uuid.slf4j:slf4j-android` を使う。`org.slf4j:slf4j-android` 1.7.x だと NOP になり、jUPnP のログが全部消える
@@ -55,11 +56,14 @@
 - targetSdk を下げても EPERM は変わらなかった(ターゲット SDK は原因ではない)
 - PC から SSDP を確認するときは、VPN や複数 NIC の影響を避けるため、端末と同じサブネットの NIC に bind して送る(bind しないと VPN 側へ出て「見えない」と誤判定する)
 - Browse は 1 回で先頭 500 件まで。ページ送りは未実装
+- 最後に開いたサーバー(UDN)とフォルダ階層(ID+タイトル)は `DlnaPrefs`(SharedPreferences `dlna`)に保存する。DLNA タブを開いて該当サーバーが検出されたとき 1 度だけ復元する。復元の判断が済むまでは保存しない(起動直後の空状態で上書きしないため)。サーバー一覧に戻っても最後のサーバーは残る(階層は空になる)
+- 保存内容の確認: `adb shell run-as com.example.myplayer cat shared_prefs/dlna.xml`(debug ビルド)
 
 ### その他
 - 依存バージョンは libs.versions.toml で一元管理
 
 ## 未確認・未実装
 - 音が実際に出ているかの聴感確認、ロック画面からの操作、通知のシークバー操作
-- DLNA: `rec` サーバーの閲覧、500 件超のフォルダ、サーバー/フォルダの記憶
+- DLNA: 500 件超のフォルダ(ページ送り)、ローカル/DLNA タブの記憶。保存したフォルダが消えている場合・保存済みサーバーが見つからない場合の挙動
+- DLNA: 手動でサーバーを選んだときに復元が割り込まないこと(コード上のみ)
 - 44.1kHz 系をそのまま DAC に渡す経路(OS のミキサーを通らない直接出力は未着手)
