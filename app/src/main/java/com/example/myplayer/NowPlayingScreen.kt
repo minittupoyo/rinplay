@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -34,6 +36,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import com.example.myplayer.usb.UsbVolume
 
 /** 全画面の「再生中」。大きなジャケット、曲名、シーク、操作ボタン、出力フォーマット。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -208,6 +212,29 @@ fun NowPlayingScreen(
                         } else {
                             MaterialTheme.colorScheme.primary
                         },
+                    )
+                }
+            }
+
+            // USB 直結ではシステム音量が効かないので、DAC 自身の音量を操作する(ビットは変わらない)。
+            val volume by UsbVolume.state.collectAsState()
+            volume?.let { v ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.VolumeUp, contentDescription = "DAC の音量", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(
+                        value = v.current.toFloat(),
+                        onValueChange = { UsbVolume.set(it.toInt()) },
+                        valueRange = v.min.toFloat()..v.max.toFloat(),
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Text(
+                        "%.1f dB".format(v.current / 256.0),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.width(64.dp),
+                        textAlign = TextAlign.End,
                     )
                 }
             }

@@ -20,8 +20,17 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val renderers = DefaultRenderersFactory(this)
-            .setEnableAudioFloatOutput(true)
+        com.example.myplayer.usb.UsbVolume.init(this)
+        com.example.myplayer.usb.UsbDac.prepare(this)
+        // USB DAC が使えるときは UsbDirectAudioSink が OS のミキサーを通さずに出す。使えなければ通常の出力。
+        val renderers = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: android.content.Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean,
+            ): AudioSink? = super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+                ?.let { com.example.myplayer.usb.UsbDirectAudioSink(context, it) }
+        }.setEnableAudioFloatOutput(true)
         val player = ExoPlayer.Builder(this, renderers)
             .setAudioAttributes(
                 AudioAttributes.Builder()

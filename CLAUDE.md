@@ -50,6 +50,17 @@
   - Pixel 6a + Shanling UA3 では `no compatible profile found`(Error -2)で失敗。USB 出力プロファイル(`hifi_playback`)が `AUDIO_OUTPUT_FLAG_NONE` で、ビットパーフェクトの経路が見当たらない。別の端末・DAC では未検証
 - この端末の USB 出力ミキサーはレート固定で、曲に追従しない。48kHz と 96kHz のスレッドのみ。48k/96k はレート一致、44.1k は 48k に、88.2k は 96k にリサンプルされる(実測)
 
+### USB DAC 直接出力(OS のミキサーを通さない)
+- `setPreferredMixerAttributes` が通らない端末(Pixel 6a + UA3)向けに、`usb/` で UAC2 の ISO 転送を自前で行う。`PlaybackService` が `UsbDirectAudioSink`(`ForwardingAudioSink`)に差し替え、使えないとき(DAC なし・権限なし・非対応のレート/形式・ステレオ以外・接続切れ)は元の `DefaultAudioSink` に任せる
+- 構成: `UsbDacDescriptor.kt`(rawDescriptors の UAC2 解析)/ `UsbDac.kt`(検出・権限・GET_RANGE / SET_CUR / GET_CUR)/ `UsbOutput.kt`(claim・クロック設定・alt 選択・スレッド)/ `cpp/usb_iso.cpp`(usbdevfs の ISO URB を 8 本、フィードバック EP の 16.16 でレート調整、不足時は無音)/ `UsbDirectAudioSink.kt`
+- UA3(実測): UAC2、クロック ID 5、AS は IF1(alt1=16bit・alt2=24bit・alt3=32bit・alt4=DSD 用らしい)、出力 EP 0x01(非同期 ISO、maxPacket 776、interval 1)、フィードバック EP 0x81。対応レートは 32k/44.1k/48k/64k/88.2k/96k/128k/176.4k…(15 種の離散値)
+- 制御転送(GET_RANGE など)は、`claimInterface(force=true)` でカーネルの snd-usb-audio を切り離してからでないと `-1` で失敗する。claim 中は OS の音(通知音など)がこの DAC に出ない
+- Java の USB API は ISO 転送に非対応なので、`UsbDeviceConnection.fileDescriptor` を JNI に渡して ioctl(SUBMITURB / REAPURB)を直接叩く。NDK 28.2 / CMake 3.22.1、abi は arm64-v8a のみ
+- USB 権限は再インストールのたびに外れ、起動時にダイアログが出る。ダイアログが出ている間にほかの場所をタップするとキャンセル扱いになり、そのセッションは OS 経由の通常出力にフォールバックする
+- 音量: USB 直結ではシステム音量が効かないので、DAC 自身の音量(UAC2 Feature Unit の VOLUME。UA3 はマスター −63.5〜0dB、単位 1/256dB)を `UsbVolume` で持つ。「設定」タブ(下部ナビの 3 つ目。`SettingsScreen`)の初期音量(−60〜0dB、1dB 刻み、既定 −30dB。`SharedPreferences usb` の `initial_db256`)が、DAC を開くときの音量。全画面「再生中」下部のスライダー(USB 直結で DAC を開いている間だけ表示)で変えた値は、既定ではプロセスが動いている間だけ有効(次回の起動は初期音量から。最大音量で鳴らないため)。設定タブの「音量を保持する」(`keep_volume`、既定 OFF)を ON にすると `last_db256` に保存し、次回もその音量で始める(保存がなければ初期音量)。OFF に戻すと保存済みの音量は捨てる。古い `volume_db256` は未使用。設定タブは `UiPrefs.lastTab` には保存しない。開くとき、音量を操作できない DAC は USB 直結を使わず OS 経由にフォールバックする。ビットは変わらないのでビットパーフェクトは保たれる
+- 確認済み(実機): 音量スライダーと初期音量の設定が DAC に反映される(初期音量 −39dB で開くことをログで確認)。「音量を保持する」ON でアプリ再起動後も保存した音量(−53dB)で開く。保持 OFF での動作はコード上のみ。44.1kHz 24bit スロットで DAC を開き、クロックの設定と検証が通る。再生位置が実時間で進み、アンダーラン 0 件・エラー 0 件。停止で正常終了
+- 未確認: 実際の聴感、88.2k / 96k / 176.4k、ギャップレスや曲間のレート切り替え、長時間のフィードバック安定性、停止後にカーネルのドライバが戻るか(`/proc/asound` は読めない)、一時停止・シーク後に古い音が最大 32ms 残る件
+
 ### DLNA(jUPnP)
 - 自宅 LAN の検出結果: `Music Server`(音楽あり。動作確認はこちら)、`rec`(HDD レコーダー。音楽は入っていない)。`rec` は音楽の確認対象外
 - 検出には `WifiManager.MulticastLock` が必要(`DlnaRepository.start()` で取得)

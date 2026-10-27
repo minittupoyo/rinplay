@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -117,10 +118,11 @@ fun AppRoot() {
     // --- 画面の状態 ---
     // 最後に開いていたセクション(ライブラリ / DLNA)を、次回の起動でも開く。
     val uiPrefs = remember { UiPrefs(context.applicationContext) }
+    remember { com.example.myplayer.usb.UsbVolume.init(context) }
     var section by remember { mutableIntStateOf(uiPrefs.lastTab) }
     fun selectSection(value: Int) {
         section = value
-        uiPrefs.lastTab = value
+        if (value <= UiPrefs.TAB_DLNA) uiPrefs.lastTab = value // 設定は保存しない(起動時はライブラリ / DLNA)
     }
     var expanded by rememberSaveable { mutableStateOf(false) }
     val currentMediaId = playback?.mediaItem?.mediaId
@@ -147,6 +149,12 @@ fun AppRoot() {
                             icon = { Icon(Icons.Rounded.Dns, contentDescription = null) },
                             label = { Text("DLNA") },
                         )
+                        NavigationBarItem(
+                            selected = section == SECTION_SETTINGS,
+                            onClick = { selectSection(SECTION_SETTINGS) },
+                            icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                            label = { Text("設定") },
+                        )
                     }
                 }
             },
@@ -154,6 +162,7 @@ fun AppRoot() {
             Box(modifier = Modifier.padding(padding)) {
                 when (section) {
                     UiPrefs.TAB_DLNA -> DlnaScreen(dlna, controller, currentMediaId)
+                    SECTION_SETTINGS -> SettingsScreen()
                     else -> LocalLibraryScreen(
                         library = library,
                         loaded = libraryLoaded,
@@ -181,3 +190,6 @@ fun AppRoot() {
         }
     }
 }
+
+/** 下部ナビの「設定」(保存するセクションは UiPrefs のライブラリ / DLNA のみ)。 */
+private const val SECTION_SETTINGS = 2
