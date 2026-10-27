@@ -67,6 +67,28 @@ private const val PREFETCH = 20
 /** 入力が止まってから検索を始めるまでの待ち時間。 */
 private const val SEARCH_DEBOUNCE_MS = 400L
 
+/** 覚えておくフォルダの中身の数。超えたら、使われていないものから捨てる。 */
+private const val FOLDER_CACHE_SIZE = 8
+
+/** 一度読んだフォルダの中身。戻ったときに読み直さず、すぐ元の位置で出すために持っておく。 */
+private class FolderContent(
+    val entries: List<DlnaEntry>,
+    val loadedCount: Long,
+    val totalCount: Long,
+    val hasMore: Boolean,
+)
+
+/** 場所ごとの key。サーバーと、いま見ているオブジェクトの組。 */
+private fun folderKey(udn: String?, objectId: String?) = "${udn.orEmpty()}#${objectId ?: "0"}"
+
+/** 覚えておく数を超えたら、使われていないものから捨てる(key は残す)。 */
+private fun trimFolders(folders: LinkedHashMap<String, FolderContent>, keep: String) {
+    while (folders.size > FOLDER_CACHE_SIZE) {
+        val oldest = folders.keys.firstOrNull { it != keep } ?: return
+        folders.remove(oldest)
+    }
+}
+
 /** 一覧がアルバムだけなら、ジャケットを大きく見せるグリッドで出す。 */
 private fun isAlbumGrid(entries: List<DlnaEntry>) = entries.isNotEmpty() && entries.all { it.kind == DlnaKind.ALBUM }
 
@@ -91,6 +113,13 @@ fun DlnaScreen(
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // フォルダごとのスクロール位置と、一度読んだ中身。戻ったときに読み直さず、元の位置で出すために持っておく。
+    // 中身は使った順に持ち(FOLDER_CACHE_SIZE を超えたら古いものから捨てる)、位置は単純に貯めておく。
+    val listPositions = remember { mutableMapOf<String, Pair<Int, Int>>() }
+    val gridPositions = remember { mutableMapOf<String, Pair<Int, Int>>() }
+    val folders = remember { LinkedHashMap<String, FolderContent>(16, 0.75f, true) }
+    // いま一覧に出している場所の key。スクロール位置を、その場所のものとして覚えるために使う。
+    var shownKey by remember { mutableStateOf<String?>(null) }
 
     // 検索。入力が止まってからサーバーの Search を呼ぶ。サーバーを変えたら検索語は消す。
     var searchActive by remember { mutableStateOf(false) }
@@ -100,10 +129,15 @@ fun DlnaScreen(
     // フォルダの中で検索を開いたときの、元の場所。検索を閉じたらここに戻る(検索中は path を空にして結果を出すため)。
     var pathBeforeSearch by remember { mutableStateOf<List<Crumb>?>(null) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    // 検索結果のスクロール位置。結果からアルバムなどを開いて戻っても、元の位置に戻る。
+    val searchState = rememberLazyListState()
+    LaunchedEffect(query) { searchState.requestScrollToItem(0) }
     LaunchedEffect(server?.udn) {
         query = ""
         searchActive = false
         pathBeforeSearch = null
+        // サーバーを変えたら、覚えている中身は捨てる(key も変わるが、古い分を残しておく理由がない)。
+        folders.clear()
     }
     LaunchedEffect(server?.udn, query) {
         val s = server
@@ -175,10 +209,50 @@ fun DlnaScreen(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
 
-    // フォルダを開いたら、状態を初期化して 1 ページ目を読む。
+    /** いま一覧に出している場所のスクロール位置を覚える。フォルダを開く・戻るときに呼ぶ。 */
+    fun rememberScroll() {
+        val key = shownKey ?: return
+        if (entries.isEmpty()) return
+        if (isAlbumGrid(entries)) {
+            gridPositions[key] = gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+        } else {
+            listPositions[key] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+        }
+    }
+
+    /** 覚えているスクロール位置へ戻す(無ければ先頭)。一覧が出来てから呼ぶ。 */
+    fun restoreScroll(key: String) {
+        val grid = isAlbumGrid(entries)
+        val position = (if (grid) gridPositions[key] else listPositions[key]) ?: (0 to 0)
+        if (grid) {
+            gridState.requestScrollToItem(position.first, position.second)
+        } else {
+            listState.requestScrollToItem(position.first, position.second)
+        }
+    }
+
+    // フォルダを開いたら 1 ページ目を読む。一度読んだ場所なら、覚えている中身を出して、スクロール位置も戻す。
     LaunchedEffect(server?.udn, currentId, homeResolved) {
         val s = server ?: return@LaunchedEffect
         if (!homeResolved) return@LaunchedEffect
+        val key = folderKey(s.udn, currentId)
+        shownKey = key
+        // scrollToItem は一覧が最初に描画されるまで待つので、読み込み中(一覧がまだ無い)では止まってしまう。
+        // 待たずに、次の描画で先頭へ戻すよう予約する(覚えている位置があれば、下で上書きする)。
+        listState.requestScrollToItem(0)
+        gridState.requestScrollToItem(0)
+        val cached = folders[key]
+        if (cached != null) {
+            entries = cached.entries
+            loadedCount = cached.loadedCount
+            totalCount = cached.totalCount
+            hasMore = cached.hasMore
+            loading = false
+            loadingMore = false
+            error = null
+            restoreScroll(key)
+            return@LaunchedEffect
+        }
         loading = true
         loadingMore = false
         error = null
@@ -186,16 +260,15 @@ fun DlnaScreen(
         loadedCount = 0L
         totalCount = 0L
         hasMore = false
-        // scrollToItem は一覧が最初に描画されるまで待つので、読み込み中(一覧がまだ無い)では止まってしまう。
-        // 待たずに、次の描画で先頭へ戻すよう予約する。
-        listState.requestScrollToItem(0)
-        gridState.requestScrollToItem(0)
         repository.browse(s, currentId ?: "0", 0L)
             .onSuccess { page ->
                 entries = page.entries
                 loadedCount = page.objectCount
                 totalCount = page.totalMatches
                 hasMore = page.hasMore(0L, DLNA_PAGE_SIZE)
+                folders[key] = FolderContent(page.entries, loadedCount, totalCount, hasMore)
+                trimFolders(folders, key)
+                restoreScroll(key)
             }
             .onFailure { error = it.message }
         loading = false
@@ -205,6 +278,7 @@ fun DlnaScreen(
     LaunchedEffect(server?.udn, currentId, homeResolved) {
         val s = server ?: return@LaunchedEffect
         if (!homeResolved) return@LaunchedEffect
+        val key = folderKey(s.udn, currentId)
         snapshotFlow {
             val last = lastVisibleIndex(entries, listState, gridState)
             // 読み込むたびに entries.size が変わるので、まだ末尾付近なら続けて発火する。
@@ -223,6 +297,9 @@ fun DlnaScreen(
                     error = it.message
                     hasMore = false
                 }
+            // 続きも覚えておく(戻ったときに、読み直さず同じ一覧を出すため)。
+            folders[key] = FolderContent(entries, loadedCount, totalCount, hasMore)
+            trimFolders(folders, key)
             loadingMore = false
         }
     }
@@ -241,6 +318,7 @@ fun DlnaScreen(
     fun openSearch() {
         // 入力欄は、フォルダの外(path が空)のときだけ出す作りなので、いまの場所を覚えてからフォルダを出る。
         if (path.isNotEmpty()) {
+            rememberScroll()
             pathBeforeSearch = path.toList()
             path.clear()
         }
@@ -250,7 +328,10 @@ fun DlnaScreen(
     /** 戻る。フォルダの奥 → 検索を閉じる → サーバー一覧、の順。 */
     fun goBack() {
         when {
-            path.isNotEmpty() -> path.removeAt(path.lastIndex)
+            path.isNotEmpty() -> {
+                rememberScroll()
+                path.removeAt(path.lastIndex)
+            }
             searchActive -> closeSearch()
             else -> server = null
         }
@@ -264,6 +345,7 @@ fun DlnaScreen(
     /** 一覧の項目を開く。フォルダなら中へ、曲なら再生(続きのページはキューに足す)。 */
     fun open(entry: DlnaEntry) {
         if (entry.isContainer) {
+            rememberScroll()
             path.add(Crumb(entry.id, entry.title))
             return
         }
@@ -341,6 +423,7 @@ fun DlnaScreen(
                     Tab(
                         selected = selected == index,
                         onClick = {
+                            rememberScroll()
                             closeSearch()
                             path.clear()
                             crumb?.let { path.add(it) }
@@ -365,6 +448,7 @@ fun DlnaScreen(
                 searching = searching,
                 error = searchError,
                 currentMediaId = currentMediaId,
+                state = searchState,
                 onOpenContainer = { path.add(Crumb(it.id, it.title)) },
                 onPlay = { tracks, index ->
                     val ctrl = latestController
@@ -395,7 +479,7 @@ fun DlnaScreen(
                     AlbumCard(
                         title = entry.title,
                         subtitle = entrySubtitle(entry, singleAlbum = false),
-                        artwork = entry.artworkUri,
+                        artwork = rowArtwork(entry),
                         placeholder = Icons.Rounded.Album,
                         onClick = { open(entry) },
                     )
@@ -417,7 +501,7 @@ fun DlnaScreen(
                         LibraryRow(
                             title = entry.title,
                             subtitle = entrySubtitle(entry, singleAlbum),
-                            artwork = entry.artworkUri,
+                            artwork = rowArtwork(entry),
                             placeholder = entry.kind.icon(),
                             shape = if (entry.kind == DlnaKind.ARTIST) CircleArtwork else DefaultArtworkShape,
                             isCurrent = !entry.isContainer && entry.mediaItem?.mediaId == currentMediaId,
@@ -494,6 +578,7 @@ private fun DlnaSearchResultsView(
     searching: Boolean,
     error: String?,
     currentMediaId: String?,
+    state: LazyListState,
     onOpenContainer: (DlnaEntry) -> Unit,
     onPlay: (List<DlnaEntry>, Int) -> Unit,
 ) {
@@ -509,7 +594,11 @@ private fun DlnaSearchResultsView(
         if (searching) LoadingBox() else EmptyState(Icons.Rounded.SearchOff, "見つかりません")
         return
     }
-    LazyColumn(contentPadding = PaddingValues(bottom = 8.dp), modifier = Modifier.fillMaxSize()) {
+    LazyColumn(
+        state = state,
+        contentPadding = PaddingValues(bottom = 8.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
         if (results.artists.isNotEmpty()) {
             item(key = "header:artists") { SectionHeader("アーティスト") }
             items(results.artists, key = { "artist:${it.id}" }) { entry ->
@@ -537,10 +626,24 @@ private fun SearchRow(entry: DlnaEntry, currentMediaId: String?, onClick: () -> 
     LibraryRow(
         title = entry.title,
         subtitle = entrySubtitle(entry, singleAlbum = false),
-        artwork = entry.artworkUri,
+        artwork = rowArtwork(entry),
         placeholder = entry.kind.icon(),
         shape = if (entry.kind == DlnaKind.ARTIST) CircleArtwork else DefaultArtworkShape,
         isCurrent = !entry.isContainer && entry.mediaItem?.mediaId == currentMediaId,
         onClick = onClick,
     )
+}
+
+/**
+ * 行に出すジャケット。サーバーがジャケットを出していない曲だけ、ファイルに埋め込まれたジャケットを取りに行く。
+ * サーバーの 160px のサムネイルは、行の大きさ(52dp)では十分きれいなので、余計な通信はしない。
+ */
+@Composable
+private fun rowArtwork(entry: DlnaEntry): Any? {
+    val mediaItem = entry.mediaItem
+    val embedded = rememberEmbeddedArtwork(
+        mediaId = mediaItem?.mediaId?.takeIf { entry.artworkUri == null },
+        mediaUrl = mediaItem?.localConfiguration?.uri?.toString(),
+    )
+    return entry.artworkUri ?: embedded
 }

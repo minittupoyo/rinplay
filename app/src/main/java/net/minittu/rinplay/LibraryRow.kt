@@ -34,6 +34,8 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +51,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import net.minittu.rinplay.dlna.EmbeddedArtwork
 
 /** 一覧のジャケットの既定の形(角丸)。 */
 val DefaultArtworkShape: Shape = RoundedCornerShape(8.dp)
@@ -86,6 +89,23 @@ fun Artwork(
             )
         }
     }
+}
+
+/**
+ * DLNA の曲の、ファイルに埋め込まれたジャケット。取りに行って、取れたら返す(取れるまでは null)。
+ *
+ * サーバーが返す upnp:albumArtURI は 160×160 のサムネイルで、全画面では 6 倍に引き伸ばされてぼやける。
+ * ファイルには 1200×1200 が入っていることが多いので、そちらを使う(先頭 64KB だけ読んで場所を確かめ、
+ * 絵の範囲だけ取り直す。詳細は [net.minittu.rinplay.dlna.EmbeddedArtwork])。
+ * 端末内のファイル(content:// など)は、これまでどおり MediaStore のジャケットを使うので対象外。
+ */
+@Composable
+fun rememberEmbeddedArtwork(mediaId: String?, mediaUrl: String?): ByteArray? {
+    val loaded by EmbeddedArtwork.state.collectAsState()
+    if (mediaId != null && mediaUrl != null && loaded[mediaId] == null) {
+        LaunchedEffect(mediaId) { EmbeddedArtwork.request(mediaId, mediaUrl) }
+    }
+    return mediaId?.let { loaded[it] }
 }
 
 /**

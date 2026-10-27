@@ -39,6 +39,10 @@ fun MiniPlayer(
 ) {
     val metadata = state.metadata
     val controller = state.controller
+    val mediaItem = state.mediaItem
+    // DLNA では、サーバーの 160px のサムネイルより、ファイルに埋め込まれたジャケットを優先する。
+    val embedded = rememberEmbeddedArtwork(mediaItem?.mediaId, mediaItem?.localConfiguration?.uri?.toString())
+    val artwork = metadata.artworkData ?: embedded ?: metadata.artworkUri
     Surface(
         tonalElevation = 3.dp,
         modifier = modifier.fillMaxWidth().clickable(onClick = onExpand),
@@ -48,20 +52,17 @@ fun MiniPlayer(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             ) {
-                Artwork(metadata.artworkData ?: metadata.artworkUri, Icons.Rounded.MusicNote, Modifier.size(48.dp))
+                Artwork(artwork, Icons.Rounded.MusicNote, Modifier.size(48.dp))
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = metadata.title?.toString().orEmpty().ifEmpty { "再生中" },
+                        text = metadata.playerTitle,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     // アーティスト · 元ファイルの形式(FLAC 24bit 48kHz / MP3 320kbps 44.1kHz など)
-                    val subtitle = listOfNotNull(
-                        metadata.artist?.toString()?.takeIf { it.isNotEmpty() },
-                        source?.label(),
-                    ).joinToString(" · ")
+                    val subtitle = listOfNotNull(metadata.artistName, source?.label()).joinToString(" · ")
                     if (subtitle.isNotEmpty()) {
                         Text(
                             text = subtitle,
@@ -72,7 +73,7 @@ fun MiniPlayer(
                         )
                     }
                 }
-                IconButton(onClick = { if (state.isPlaying) controller.pause() else controller.play() }) {
+                IconButton(onClick = { state.togglePlayPause() }) {
                     Icon(
                         if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (state.isPlaying) "一時停止" else "再生",

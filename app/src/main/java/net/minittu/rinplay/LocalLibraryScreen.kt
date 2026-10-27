@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -68,6 +70,13 @@ fun LocalLibraryScreen(
     val stack = remember { mutableStateListOf<LocalView>() }
     // 検索結果。アルバムやアーティストを開いて戻っても、検索語が残っていれば結果に戻る。
     val results = remember(library, query) { library.search(query) }
+    // 一覧のスクロール位置は、画面ごとに別の Composable なので、ここで持って使い回す。
+    // こうすると、アルバムを開いて戻ったときや、タブを切り替えたときに、元の位置に戻る。
+    val listStates = remember { mutableMapOf<String, LazyListState>() }
+    val gridStates = remember { mutableMapOf<String, LazyGridState>() }
+
+    fun listState(key: String): LazyListState = listStates.getOrPut(key) { LazyListState() }
+    fun gridState(key: String): LazyGridState = gridStates.getOrPut(key) { LazyGridState() }
 
     fun closeSearch() {
         searchActive = false
@@ -139,21 +148,44 @@ fun LocalLibraryScreen(
             )
             !loaded -> LoadingBox()
             library.tracks.isEmpty() -> EmptyState(Icons.Rounded.LibraryMusic, "端末内に音楽が見つかりません")
-            view is LocalView.AlbumTracks ->
-                TrackList(library.tracksOfAlbum(view.album.id), showAlbum = false, currentMediaId, onPlay = ::play)
-            view is LocalView.ArtistAlbums ->
-                AlbumGrid(library.albumsOfArtist(view.artist.name), onOpen = { stack.add(LocalView.AlbumTracks(it)) })
+            view is LocalView.AlbumTracks -> TrackList(
+                tracks = library.tracksOfAlbum(view.album.id),
+                showAlbum = false,
+                currentMediaId = currentMediaId,
+                onPlay = ::play,
+                state = listState("album:${view.album.id}"),
+            )
+            view is LocalView.ArtistAlbums -> AlbumGrid(
+                albums = library.albumsOfArtist(view.artist.name),
+                onOpen = { stack.add(LocalView.AlbumTracks(it)) },
+                state = gridState("artist:${view.artist.name}"),
+            )
             searchActive && query.isNotBlank() -> SearchResultsList(
                 results,
                 currentMediaId,
                 onOpenArtist = { stack.add(LocalView.ArtistAlbums(it)) },
                 onOpenAlbum = { stack.add(LocalView.AlbumTracks(it)) },
                 onPlay = ::play,
+                state = listState("search:$query"),
             )
             searchActive -> Unit
-            tab == 0 -> TrackList(library.tracks, showAlbum = true, currentMediaId, onPlay = ::play)
-            tab == 1 -> AlbumGrid(library.albums, onOpen = { stack.add(LocalView.AlbumTracks(it)) })
-            else -> ArtistList(library, onOpen = { stack.add(LocalView.ArtistAlbums(it)) })
+            tab == 0 -> TrackList(
+                tracks = library.tracks,
+                showAlbum = true,
+                currentMediaId = currentMediaId,
+                onPlay = ::play,
+                state = listState("tracks"),
+            )
+            tab == 1 -> AlbumGrid(
+                albums = library.albums,
+                onOpen = { stack.add(LocalView.AlbumTracks(it)) },
+                state = gridState("albums"),
+            )
+            else -> ArtistList(
+                library = library,
+                onOpen = { stack.add(LocalView.ArtistAlbums(it)) },
+                state = listState("artists"),
+            )
         }
     }
 }
@@ -164,8 +196,13 @@ private fun TrackList(
     showAlbum: Boolean,
     currentMediaId: String?,
     onPlay: (List<LocalTrack>, Int) -> Unit,
+    state: LazyListState,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 4.dp)) {
+    LazyColumn(
+        state = state,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
         itemsIndexed(tracks, key = { _, track -> track.item.mediaId }) { index, track ->
             val metadata = track.item.mediaMetadata
             LibraryRow(
@@ -182,12 +219,13 @@ private fun TrackList(
 
 /** アルバムは、ジャケットを大きく見せるグリッドで出す。 */
 @Composable
-private fun AlbumGrid(albums: List<LocalAlbum>, onOpen: (LocalAlbum) -> Unit) {
+private fun AlbumGrid(albums: List<LocalAlbum>, onOpen: (LocalAlbum) -> Unit, state: LazyGridState) {
     if (albums.isEmpty()) {
         EmptyState(Icons.Rounded.Album, "アルバムが見つかりません")
         return
     }
     LazyVerticalGrid(
+        state = state,
         columns = GridCells.Adaptive(minSize = 150.dp),
         contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -207,8 +245,12 @@ private fun AlbumGrid(albums: List<LocalAlbum>, onOpen: (LocalAlbum) -> Unit) {
 }
 
 @Composable
-private fun ArtistList(library: LocalLibrary, onOpen: (LocalArtist) -> Unit) {
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 4.dp)) {
+private fun ArtistList(library: LocalLibrary, onOpen: (LocalArtist) -> Unit, state: LazyListState) {
+    LazyColumn(
+        state = state,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 4.dp),
+    ) {
         items(library.artists, key = { it.name }) { artist ->
             LibraryRow(
                 title = artist.name,
@@ -229,12 +271,17 @@ private fun SearchResultsList(
     onOpenArtist: (LocalArtist) -> Unit,
     onOpenAlbum: (LocalAlbum) -> Unit,
     onPlay: (List<LocalTrack>, Int) -> Unit,
+    state: LazyListState,
 ) {
     if (results.artists.isEmpty() && results.albums.isEmpty() && results.tracks.isEmpty()) {
         EmptyState(Icons.Rounded.SearchOff, "見つかりません")
         return
     }
-    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+    LazyColumn(
+        state = state,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 8.dp),
+    ) {
         if (results.artists.isNotEmpty()) {
             item(key = "header:artists") { SectionHeader("アーティスト") }
             items(results.artists, key = { "artist:${it.name}" }) { artist ->

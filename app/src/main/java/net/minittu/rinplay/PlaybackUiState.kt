@@ -42,7 +42,32 @@ class PlaybackUiState(val controller: MediaController) {
         positionMs = controller.currentPosition
         durationMs = controller.duration
     }
+
+    /** 再生と一時停止の切り替え。 */
+    fun togglePlayPause() {
+        if (isPlaying) controller.pause() else controller.play()
+    }
+
+    /**
+     * シーク。位置の表示もすぐ合わせる
+     * (次の [refreshPosition] まで古い位置が出て、ツマミが飛んで戻るのを避ける)。
+     */
+    fun seekTo(ms: Long) {
+        controller.seekTo(ms)
+        positionMs = ms
+    }
 }
+
+/**
+ * プレイヤーに出す曲名。タイトルが空なら「再生中」。
+ * MediaMetadata 自身の displayTitle(CharSequence。通知などが使う別物)とは名前を分ける。
+ */
+val MediaMetadata.playerTitle: String
+    get() = title?.toString().orEmpty().ifEmpty { "再生中" }
+
+/** アーティスト名。空なら null(表示から省くため)。 */
+val MediaMetadata.artistName: String?
+    get() = artist?.toString()?.takeIf { it.isNotEmpty() }
 
 /** [controller] がつながっていれば、その再生状態を返す。つながるまでは null。 */
 @Composable
