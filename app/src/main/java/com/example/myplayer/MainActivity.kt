@@ -148,6 +148,8 @@ private fun PlayerScreen() {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
+                                // DLNA の続きページをキューに足している最中なら止める(ローカル曲に混ざらないように)。
+                                dlna.cancelQueueLoading()
                                 controller?.run {
                                     setMediaItems(songs, index, 0L)
                                     prepare()
