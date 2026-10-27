@@ -31,6 +31,7 @@ class UsbDirectAudioSink(
     @Volatile private var usbFailed = false
     @Volatile private var retryUsb = false
     @Volatile private var usbLost = false
+    @Volatile private var permissionDenied = false
     private var lastLossMs = 0L
     private var lastConfig: AudioSink.AudioSinkConfig? = null
 
@@ -124,8 +125,23 @@ class UsbDirectAudioSink(
      */
     fun onUsbAttached() {
         usbFailed = false
+        permissionDenied = false
         retryUsb = true
     }
+
+    /** 挿された DAC の権限ダイアログで「許可しない」が選ばれた。以後は OS 経由の出力でよい(挿し直されるまで)。 */
+    fun onUsbPermissionDenied() {
+        permissionDenied = true
+    }
+
+    /**
+     * 直接出力が ON で、USB DAC が挿さっているのに、権限がまだない(ダイアログ待ち)間は、OS 経由で鳴らさない。
+     * OS 経由で鳴らすと、OS が出力先をその DAC に切り替え、DAC の既定の音量(最大)と OS の音量
+     * (直結中は効かないので高いままのことがある)で、いきなり大きな音が鳴るおそれがある。
+     * 「許可しない」が選ばれたら、OS 経由に戻す。
+     */
+    private fun waitingForUsbPermission(): Boolean =
+        UsbVolume.directOutput.value && !permissionDenied && UsbDac.hasAudioDeviceWithoutPermission(context)
 
     /** USB DAC が抜かれた。直結中なら、次の handleBuffer で OS 経由に戻す。どのスレッドから呼んでもよい。 */
     fun onUsbDetached() {
@@ -186,7 +202,11 @@ class UsbDirectAudioSink(
             retryUsb = false
             lastConfig?.let { if (tryUseUsb(it)) Log.i(TAG, "switched to USB direct") }
         }
-        if (!useUsb) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        if (!useUsb) {
+            // 権限待ちの間は、データを受け取らずに待つ(ExoPlayer がまた呼んでくる)。
+            if (waitingForUsbPermission()) return false
+            return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+        }
         val out = usb
         // 設定で直接出力が OFF にされた。すぐ OS の出力に戻す。
         val disabled = !UsbVolume.directOutput.value
@@ -251,6 +271,9 @@ class UsbDirectAudioSink(
             stalledSinceMs = 0
         } else if (stalledSinceMs == 0L) {
             stalledSinceMs = now
+        } else if (!playing) {
+            // 一時停止中は、リングが満杯で進まないのが普通。詰まりとはみなさない。
+            stalledSinceMs = 0
         } else if (now - stalledSinceMs > 1000) {
             stalledSinceMs = now
             Log.w(

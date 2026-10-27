@@ -28,14 +28,17 @@ object UsbDac {
     }
 
     /** 権限があれば true。なければ要求ダイアログを出して false(許可後に onGranted が呼ばれる)。 */
-    fun ensurePermission(context: Context, device: UsbDevice, onGranted: () -> Unit): Boolean {
+    fun ensurePermission(context: Context, device: UsbDevice, onGranted: () -> Unit, onDenied: () -> Unit = {}): Boolean {
         val usb = context.getSystemService(UsbManager::class.java)
         if (usb.hasPermission(device)) return true
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context, intent: Intent) {
                 context.unregisterReceiver(this)
                 if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) onGranted()
-                else Log.w(TAG, "USB permission denied")
+                else {
+                    Log.w(TAG, "USB permission denied")
+                    onDenied()
+                }
             }
         }
         val filter = IntentFilter(ACTION_PERMISSION)
@@ -135,10 +138,16 @@ object UsbDac {
             conn.controlTransfer(0x21, 1, (2 shl 8) or ch, (d.featureUnitId shl 8) or d.acInterface, b, 2, 1000) == 2
         }
 
+    /** USB オーディオ機器が挿さっていて、まだ権限がない(許可のダイアログ待ちなど)か。 */
+    fun hasAudioDeviceWithoutPermission(context: Context): Boolean {
+        val device = findAudioDevice(context) ?: return false
+        return !context.getSystemService(UsbManager::class.java).hasPermission(device)
+    }
+
     /** DAC があれば、権限を確認する。権限があれば(または許可されたあとで)[onReady] を呼ぶ。 */
-    fun prepare(context: Context, onReady: () -> Unit = {}) {
+    fun prepare(context: Context, onReady: () -> Unit = {}, onDenied: () -> Unit = {}) {
         val device = findAudioDevice(context) ?: return
-        if (ensurePermission(context, device, onReady)) {
+        if (ensurePermission(context, device, onReady, onDenied)) {
             onReady()
         } else {
             Log.i(TAG, "requesting USB permission for ${device.productName}")

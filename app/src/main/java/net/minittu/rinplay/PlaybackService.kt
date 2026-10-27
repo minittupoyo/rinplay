@@ -41,7 +41,17 @@ class PlaybackService : MediaSessionService() {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     Log.i("PlaybackService", "USB device attached")
-                    if (UsbVolume.directOutput.value) UsbDac.prepare(context) { usbSink?.onUsbAttached() }
+                    if (UsbVolume.directOutput.value && UsbDac.findAudioDevice(context) != null) {
+                        // OS 経由で再生中に DAC が挿されると、OS が出力先をその DAC に切り替え、DAC の既定の音量(最大)と
+                        // OS の音量(直結中は効かないので高いままのことがある)で、いきなり大きな音が鳴るおそれがある。
+                        // OS が切り替えるより先に止める。直結は、権限を許可したあと、再生ボタンで始まる。
+                        session?.player?.pause()
+                        UsbDac.prepare(
+                            context,
+                            onReady = { usbSink?.onUsbAttached() },
+                            onDenied = { usbSink?.onUsbPermissionDenied() },
+                        )
+                    }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     Log.i("PlaybackService", "USB device detached")
@@ -60,7 +70,13 @@ class PlaybackService : MediaSessionService() {
         // 許可されたら、再生中でも直結に切り替える。OFF の間は DAC に触らない。
         scope.launch {
             UsbVolume.directOutput.collect { enabled ->
-                if (enabled) UsbDac.prepare(this@PlaybackService) { usbSink?.onUsbAttached() }
+                if (enabled) {
+                    UsbDac.prepare(
+                        this@PlaybackService,
+                        onReady = { usbSink?.onUsbAttached() },
+                        onDenied = { usbSink?.onUsbPermissionDenied() },
+                    )
+                }
             }
         }
         // USB DAC が使えるときは UsbDirectAudioSink が OS のミキサーを通さずに出す。使えなければ通常の出力。
