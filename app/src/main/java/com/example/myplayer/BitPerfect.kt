@@ -27,7 +27,7 @@ object BitPerfect {
 
     /** 状態の説明文を返す。画面表示とログに使う。 */
     fun apply(context: Context, sampleRateHz: Int): String {
-        if (Build.VERSION.SDK_INT < 34) return "非対応(Android 14 未満)"
+        if (Build.VERSION.SDK_INT < 34) return "非対応(Android 14 以降が必要)"
         val am = context.getSystemService(AudioManager::class.java)
         val devices = am.getAudioDevicesForAttributes(attributes)
         if (devices.isEmpty()) return "出力デバイスなし"
@@ -48,9 +48,10 @@ object BitPerfect {
             val ok = am.setPreferredMixerAttributes(attributes, device, wanted)
             val now = am.getPreferredMixerAttributes(attributes, device)
             Log.i(TAG, "set(${wanted.describe()}) -> $ok, now=${now?.describe()}")
-            return if (ok) "要求成功 ${wanted.describe()}" else "要求失敗 ${wanted.describe()}"
+            return if (ok) "有効" else "要求失敗"
         }
-        return "対応構成なし(${devices.joinToString { it.describe() }} / ${sampleRateHz}Hz)"
+        Log.i(TAG, "no bit-perfect profile: devices=${devices.joinToString { it.describe() }} rate=${sampleRateHz}Hz")
+        return "非対応(この出力機器は未対応)"
     }
 
     fun clear(context: Context) {

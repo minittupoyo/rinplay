@@ -1,20 +1,45 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.example.myplayer
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SearchOff
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.media3.session.MediaController
@@ -40,8 +66,17 @@ private const val PREFETCH = 20
 /** 入力が止まってから検索を始めるまでの待ち時間。 */
 private const val SEARCH_DEBOUNCE_MS = 400L
 
+/** 一覧がアルバムだけなら、ジャケットを大きく見せるグリッドで出す。 */
+private fun isAlbumGrid(entries: List<DlnaEntry>) = entries.isNotEmpty() && entries.all { it.kind == DlnaKind.ALBUM }
+
+/** DLNA サーバー上の音楽。上部バー(戻る・検索・再検索)+ タブ + 一覧。 */
 @Composable
-fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifier: Modifier = Modifier) {
+fun DlnaScreen(
+    repository: DlnaRepository,
+    controller: MediaController?,
+    currentMediaId: String?,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val prefs = remember { DlnaPrefs(context.applicationContext) }
     val servers by repository.servers.collectAsState()
@@ -57,11 +92,15 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
     var error by remember { mutableStateOf<String?>(null) }
 
     // 検索。入力が止まってからサーバーの Search を呼ぶ。サーバーを変えたら検索語は消す。
+    var searchActive by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<DlnaSearchResults?>(null) }
     var searching by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(server?.udn) { query = "" }
+    LaunchedEffect(server?.udn) {
+        query = ""
+        searchActive = false
+    }
     LaunchedEffect(server?.udn, query) {
         val s = server
         if (s == null || query.isBlank()) {
@@ -81,7 +120,7 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
             }
         searching = false
     }
-    val showingSearch = server != null && path.isEmpty() && query.isNotBlank()
+    val showingSearch = server != null && searchActive && path.isEmpty() && query.isNotBlank()
 
     // サーバーの音楽ライブラリの入口(Music と、曲/アルバム/アーティストの場所)。
     // 探し終わるまで(homeResolved が false の間)は一覧を読まない。ルートを読んでから読み直すのを避けるため。
@@ -130,6 +169,7 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
     // パスが空のときの起点。音楽ライブラリが見つかれば Music、なければサーバーのルート。
     val currentId = path.lastOrNull()?.id ?: home?.rootId
     val listState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
 
     // フォルダを開いたら、状態を初期化して 1 ページ目を読む。
     LaunchedEffect(server?.udn, currentId, homeResolved) {
@@ -142,7 +182,10 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
         loadedCount = 0L
         totalCount = 0L
         hasMore = false
-        listState.scrollToItem(0)
+        // scrollToItem は一覧が最初に描画されるまで待つので、読み込み中(一覧がまだ無い)では止まってしまう。
+        // 待たずに、次の描画で先頭へ戻すよう予約する。
+        listState.requestScrollToItem(0)
+        gridState.requestScrollToItem(0)
         repository.browse(s, currentId ?: "0", 0L)
             .onSuccess { page ->
                 entries = page.entries
@@ -159,7 +202,7 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
         val s = server ?: return@LaunchedEffect
         if (!homeResolved) return@LaunchedEffect
         snapshotFlow {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val last = lastVisibleIndex(entries, listState, gridState)
             // 読み込むたびに entries.size が変わるので、まだ末尾付近なら続けて発火する。
             if (hasMore && !loading && last >= entries.size - PREFETCH) entries.size else -1
         }.distinctUntilChanged().filter { it >= 0 }.collect {
@@ -180,86 +223,126 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
         }
     }
 
-    BackHandler(enabled = server != null) {
-        if (path.isNotEmpty()) path.removeAt(path.lastIndex) else server = null
+    fun closeSearch() {
+        searchActive = false
+        query = ""
+    }
+
+    /** 戻る。フォルダの奥 → 検索を閉じる → サーバー一覧、の順。 */
+    fun goBack() {
+        when {
+            path.isNotEmpty() -> path.removeAt(path.lastIndex)
+            searchActive -> closeSearch()
+            else -> server = null
+        }
+    }
+    BackHandler(enabled = server != null) { goBack() }
+
+    /** 一覧の項目を開く。フォルダなら中へ、曲なら再生(続きのページはキューに足す)。 */
+    fun open(entry: DlnaEntry) {
+        if (entry.isContainer) {
+            path.add(Crumb(entry.id, entry.title))
+            return
+        }
+        val ctrl = controller ?: return
+        val queue = entries.filter { !it.isContainer }
+        repository.cancelQueueLoading()
+        ctrl.setMediaItems(queue.mapNotNull { it.mediaItem }, queue.indexOf(entry), 0L)
+        ctrl.prepare()
+        ctrl.play()
+        // 続きのページがあれば、裏で読み込んでキューに足す。
+        if (hasMore) {
+            server?.let { repository.appendRemainingToQueue(it, currentId ?: "0", loadedCount, ctrl) }
+        }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                text = server?.let { s -> (listOf(s.name) + path.map { it.title }).joinToString(" / ") }
-                    ?: "DLNA サーバー(${servers.size})",
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
+        val currentServer = server
+        if (currentServer != null && searchActive && path.isEmpty()) {
+            SearchTopBar(
+                query = query,
+                onQueryChange = {
+                    query = it
+                    // 検索語を入れたら、いま開いているフォルダから抜けて検索結果を出す。
+                    if (it.isNotBlank()) path.clear()
+                },
+                onClose = ::closeSearch,
+                placeholder = "${currentServer.name} を検索",
             )
-            TextButton(onClick = { repository.search() }) { Text("再検索") }
-        }
-
-        // 検索語を入れたら、いま開いているフォルダから抜けて検索結果を出す(結果から開いて戻れば結果に戻る)。
-        if (server != null) {
-            SearchField(query, onQueryChange = {
-                query = it
-                if (it.isNotBlank()) path.clear()
-            })
+        } else {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = when {
+                            currentServer == null -> "DLNA"
+                            path.isNotEmpty() -> path.last().title
+                            else -> currentServer.name
+                        },
+                        maxLines = 1,
+                    )
+                },
+                navigationIcon = {
+                    if (currentServer != null) {
+                        IconButton(onClick = ::goBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "戻る")
+                        }
+                    }
+                },
+                actions = {
+                    if (currentServer != null) {
+                        IconButton(onClick = { searchActive = true }) {
+                            Icon(Icons.Rounded.Search, contentDescription = "検索")
+                        }
+                    }
+                    IconButton(onClick = { repository.search() }) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "サーバーを再検索")
+                    }
+                },
+            )
         }
 
         // 音楽ライブラリの入口が見つかったサーバーでは、ローカルと同じ「曲 / アルバム / アーティスト」を出す。
         val library = home
-        if (server != null && library != null) {
-            val tab = when (path.firstOrNull()?.id) {
-                null -> 0
-                library.songs?.id -> 1
-                library.albums?.id -> 2
-                library.artists?.id -> 3
-                else -> 0
+        if (currentServer != null && library != null && !(searchActive && path.isEmpty())) {
+            val sections = buildList {
+                add("ホーム" to null)
+                library.songs?.let { add("曲" to it) }
+                library.albums?.let { add("アルバム" to it) }
+                library.artists?.let { add("アーティスト" to it) }
             }
-            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-                val selected = { index: Int -> tab == index && !showingSearch }
-                DlnaTab("ホーム", selected(0)) { query = ""; path.clear() }
-                library.songs?.let { c -> DlnaTab("曲", selected(1)) { query = ""; path.clear(); path.add(c) } }
-                library.albums?.let { c -> DlnaTab("アルバム", selected(2)) { query = ""; path.clear(); path.add(c) } }
-                library.artists?.let { c -> DlnaTab("アーティスト", selected(3)) { query = ""; path.clear(); path.add(c) } }
+            val selected = if (path.isEmpty()) 0 else {
+                sections.indexOfFirst { it.second?.id == path.first().id }.takeIf { it >= 0 } ?: 0
             }
-        }
-
-        if (server != null && hasMore && totalCount > 0) {
-            Text(
-                "$loadedCount / $totalCount 件を読み込み済み",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
-        }
-        if (!showingSearch) {
-            error?.let { Text("エラー: $it", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
-            if (loading) Text("読み込み中…", modifier = Modifier.padding(16.dp))
-        }
-
-        if (server == null) {
-            if (servers.isEmpty()) {
-                Text("サーバーが見つかりません", modifier = Modifier.padding(16.dp))
-            }
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(servers, key = { it.udn }) { s ->
-                    Text(
-                        s.name,
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            restoreDone = true
-                            server = s
-                        }.padding(16.dp),
+            PrimaryScrollableTabRow(selectedTabIndex = selected, edgePadding = 0.dp) {
+                sections.forEachIndexed { index, (label, crumb) ->
+                    Tab(
+                        selected = selected == index,
+                        onClick = {
+                            closeSearch()
+                            path.clear()
+                            crumb?.let { path.add(it) }
+                        },
+                        text = { Text(label) },
                     )
                 }
             }
-        } else if (showingSearch) {
-            DlnaSearchResultsView(
+        }
+
+        when {
+            currentServer == null -> ServerList(
+                servers = servers,
+                onSelect = {
+                    restoreDone = true
+                    server = it
+                },
+                onRefresh = { repository.search() },
+            )
+            showingSearch -> DlnaSearchResultsView(
                 results = searchResults,
                 searching = searching,
                 error = searchError,
-                onOpen = { path.add(Crumb(it.id, it.title)) },
+                currentMediaId = currentMediaId,
+                onOpenContainer = { path.add(Crumb(it.id, it.title)) },
                 onPlay = { tracks, index ->
                     val ctrl = controller
                     if (ctrl != null) {
@@ -270,55 +353,104 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                     }
                 },
             )
-        } else {
-            // 曲がすべて同じアルバムなら、補足にアルバム名は出さない(アルバムを開いた画面)。
-            val singleAlbum = remember(entries) {
-                entries.filter { !it.isContainer }.mapNotNull { it.albumTitle?.takeIf(String::isNotEmpty) }
-                    .distinct().size <= 1
-            }
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            searchActive && path.isEmpty() -> Unit
+            error != null && entries.isEmpty() -> EmptyState(
+                icon = Icons.Rounded.ErrorOutline,
+                message = "読み込めませんでした\n$error",
+            )
+            loading && entries.isEmpty() -> LoadingBox()
+            entries.isEmpty() -> EmptyState(Icons.Rounded.SearchOff, "このフォルダには項目がありません")
+            isAlbumGrid(entries) -> LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(minSize = 150.dp),
+                contentPadding = PaddingValues(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 items(entries, key = { it.id }) { entry ->
-                    LibraryRow(
+                    AlbumCard(
                         title = entry.title,
-                        subtitle = entrySubtitle(entry, singleAlbum),
+                        subtitle = entrySubtitle(entry, singleAlbum = false),
                         artwork = entry.artworkUri,
-                        placeholder = when (entry.kind) {
-                            DlnaKind.ALBUM -> "💿"
-                            DlnaKind.ARTIST -> "👤"
-                            DlnaKind.FOLDER -> "📁"
-                            DlnaKind.TRACK -> "♪"
-                        },
-                        onClick = {
-                            val ctrl = controller
-                            if (entry.isContainer) {
-                                path.add(Crumb(entry.id, entry.title))
-                            } else if (ctrl != null) {
-                                val queue = entries.filter { !it.isContainer }
-                                repository.cancelQueueLoading()
-                                ctrl.setMediaItems(queue.mapNotNull { it.mediaItem }, queue.indexOf(entry), 0L)
-                                ctrl.prepare()
-                                ctrl.play()
-                                // 続きのページがあれば、裏で読み込んでキューに足す。
-                                if (hasMore) {
-                                    server?.let {
-                                        repository.appendRemainingToQueue(it, currentId ?: "0", loadedCount, ctrl)
-                                    }
-                                }
-                            }
-                        },
+                        placeholder = Icons.Rounded.Album,
+                        onClick = { open(entry) },
                     )
                 }
-                if (loadingMore) {
-                    item { Text("読み込み中…", modifier = Modifier.padding(16.dp)) }
+                if (loadingMore) item(span = { GridItemSpan(maxLineSpan) }) { LoadingFooter() }
+            }
+            else -> {
+                // 曲がすべて同じアルバムなら、補足にアルバム名は出さない(アルバムを開いた画面)。
+                val singleAlbum = remember(entries) {
+                    entries.filter { !it.isContainer }.mapNotNull { it.albumTitle?.takeIf(String::isNotEmpty) }
+                        .distinct().size <= 1
+                }
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(entries, key = { it.id }) { entry ->
+                        LibraryRow(
+                            title = entry.title,
+                            subtitle = entrySubtitle(entry, singleAlbum),
+                            artwork = entry.artworkUri,
+                            placeholder = entry.kind.icon(),
+                            shape = if (entry.kind == DlnaKind.ARTIST) CircleArtwork else DefaultArtworkShape,
+                            isCurrent = !entry.isContainer && entry.mediaItem?.mediaId == currentMediaId,
+                            onClick = { open(entry) },
+                        )
+                    }
+                    if (loadingMore) item { LoadingFooter() }
                 }
             }
         }
     }
 }
 
+/** 表示中の一覧の、いちばん下に見えている項目の位置。一覧(リスト/グリッド)に合わせて読み分ける。 */
+private fun lastVisibleIndex(entries: List<DlnaEntry>, list: LazyListState, grid: LazyGridState): Int =
+    (if (isAlbumGrid(entries)) grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+    else list.layoutInfo.visibleItemsInfo.lastOrNull()?.index) ?: -1
+
+private fun DlnaKind.icon(): ImageVector = when (this) {
+    DlnaKind.ALBUM -> Icons.Rounded.Album
+    DlnaKind.ARTIST -> Icons.Rounded.Person
+    DlnaKind.FOLDER -> Icons.Rounded.Folder
+    DlnaKind.TRACK -> Icons.Rounded.MusicNote
+}
+
+/** サーバー一覧。見つからないときは、探している旨と再検索ボタン。 */
 @Composable
-private fun DlnaTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick) { Text(if (selected) "● $label" else label) }
+private fun ServerList(servers: List<DlnaServer>, onSelect: (DlnaServer) -> Unit, onRefresh: () -> Unit) {
+    if (servers.isEmpty()) {
+        EmptyState(
+            icon = Icons.Rounded.Dns,
+            message = "DLNA サーバーを探しています\n同じ Wi-Fi につながっているか確認してください",
+            actionLabel = "再検索",
+            onAction = onRefresh,
+        )
+        return
+    }
+    LazyColumn(contentPadding = PaddingValues(vertical = 4.dp), modifier = Modifier.fillMaxSize()) {
+        items(servers, key = { it.udn }) { s ->
+            LibraryRow(
+                title = s.name,
+                subtitle = "DLNA サーバー",
+                artwork = null,
+                placeholder = Icons.Rounded.Dns,
+                shape = CircleArtwork,
+                onClick = { onSelect(s) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadingFooter() {
+    Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(modifier = Modifier.padding(4.dp))
+    }
 }
 
 /** 一覧の行の補足。アルバムは「アーティスト · N曲」、フォルダは件数、曲はアーティスト(と、必要ならアルバム)。 */
@@ -338,53 +470,54 @@ private fun DlnaSearchResultsView(
     results: DlnaSearchResults?,
     searching: Boolean,
     error: String?,
-    onOpen: (DlnaEntry) -> Unit,
+    currentMediaId: String?,
+    onOpenContainer: (DlnaEntry) -> Unit,
     onPlay: (List<DlnaEntry>, Int) -> Unit,
 ) {
     if (error != null) {
-        Text("エラー: $error", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+        EmptyState(Icons.Rounded.ErrorOutline, error)
         return
     }
     if (results == null) {
-        if (searching) Text("検索中…", modifier = Modifier.padding(16.dp))
+        if (searching) LoadingBox()
         return
     }
     if (results.artists.isEmpty() && results.albums.isEmpty() && results.tracks.isEmpty()) {
-        Text(if (searching) "検索中…" else "見つかりません", modifier = Modifier.padding(16.dp))
+        if (searching) LoadingBox() else EmptyState(Icons.Rounded.SearchOff, "見つかりません")
         return
     }
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        if (searching) item(key = "searching") { Text("検索中…", modifier = Modifier.padding(horizontal = 16.dp)) }
+    LazyColumn(contentPadding = PaddingValues(bottom = 8.dp), modifier = Modifier.fillMaxSize()) {
         if (results.artists.isNotEmpty()) {
-            item(key = "header:artists") { SectionHeader("アーティスト(${results.artists.size})") }
-            items(results.artists, key = { "artist:${it.id}" }) { entry -> SearchRow(entry, singleAlbum = false) { onOpen(entry) } }
+            item(key = "header:artists") { SectionHeader("アーティスト") }
+            items(results.artists, key = { "artist:${it.id}" }) { entry ->
+                SearchRow(entry, currentMediaId) { onOpenContainer(entry) }
+            }
         }
         if (results.albums.isNotEmpty()) {
-            item(key = "header:albums") { SectionHeader("アルバム(${results.albums.size})") }
-            items(results.albums, key = { "album:${it.id}" }) { entry -> SearchRow(entry, singleAlbum = false) { onOpen(entry) } }
+            item(key = "header:albums") { SectionHeader("アルバム") }
+            items(results.albums, key = { "album:${it.id}" }) { entry ->
+                SearchRow(entry, currentMediaId) { onOpenContainer(entry) }
+            }
         }
         if (results.tracks.isNotEmpty()) {
-            val more = if (results.tracksTruncated) "+" else ""
-            item(key = "header:tracks") { SectionHeader("曲(${results.tracks.size}$more)") }
+            val more = if (results.tracksTruncated) "(上位 ${results.tracks.size} 件)" else ""
+            item(key = "header:tracks") { SectionHeader("曲$more") }
             itemsIndexed(results.tracks, key = { _, entry -> "track:${entry.id}" }) { index, entry ->
-                SearchRow(entry, singleAlbum = false) { onPlay(results.tracks, index) }
+                SearchRow(entry, currentMediaId) { onPlay(results.tracks, index) }
             }
         }
     }
 }
 
 @Composable
-private fun SearchRow(entry: DlnaEntry, singleAlbum: Boolean, onClick: () -> Unit) {
+private fun SearchRow(entry: DlnaEntry, currentMediaId: String?, onClick: () -> Unit) {
     LibraryRow(
         title = entry.title,
-        subtitle = entrySubtitle(entry, singleAlbum),
+        subtitle = entrySubtitle(entry, singleAlbum = false),
         artwork = entry.artworkUri,
-        placeholder = when (entry.kind) {
-            DlnaKind.ALBUM -> "💿"
-            DlnaKind.ARTIST -> "👤"
-            DlnaKind.FOLDER -> "📁"
-            DlnaKind.TRACK -> "♪"
-        },
+        placeholder = entry.kind.icon(),
+        shape = if (entry.kind == DlnaKind.ARTIST) CircleArtwork else DefaultArtworkShape,
+        isCurrent = !entry.isContainer && entry.mediaItem?.mediaId == currentMediaId,
         onClick = onClick,
     )
 }

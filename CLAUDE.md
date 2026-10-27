@@ -37,7 +37,7 @@
 ## 実装上の注意
 
 ### 出力表示とビットパーフェクト
-- 画面の「出力」表示は、AudioTrack に渡した形式(`onAudioTrackInitialized`)。端末の実出力ではない。実出力は `dumpsys media.audio_flinger` で、アプリ(uid)のトラックが乗るスレッドを見る
+- 画面の出力フォーマット(ミニプレイヤーの補足の `48 kHz · 16-bit`、全画面「再生中」のチップ)は、AudioTrack に渡した形式(`onAudioTrackInitialized`)。端末の実出力ではない。実出力は `dumpsys media.audio_flinger` で、アプリ(uid)のトラックが乗るスレッドを見る
 - `setEnableAudioFloatOutput(true)` を維持する。false にすると 24bit FLAC が 16bit 出力になる
 - AudioTrack の解放イベントは、新トラック作成後に届くことがある。出力表示は「生きているトラック数」で消す(構成の比較はしない)
 - ビットパーフェクトは Android 14+ の `setPreferredMixerAttributes`。要点:
@@ -61,7 +61,8 @@
 - ページ送りの動作確認は、`DLNA_PAGE_SIZE` を一時的に 20 にして行う(手元の最大フォルダが 50 件のため)。戻し忘れに注意
 - 最後に開いたサーバー(UDN)とフォルダ階層(ID+タイトル)は `DlnaPrefs`(SharedPreferences `dlna`)に保存する。DLNA タブを開いて該当サーバーが検出されたとき 1 度だけ復元する。復元の判断が済むまでは保存しない(起動直後の空状態で上書きしないため)。サーバー一覧に戻っても最後のサーバーは残る(階層は空になる)
 - 保存内容の確認: `adb shell run-as com.example.myplayer cat shared_prefs/dlna.xml`(debug ビルド)
-- 上部のタブ(ローカル / DLNA)は `UiPrefs`(SharedPreferences `ui`、キー `last_tab`、0=ローカル 1=DLNA)に保存し、起動時にそのタブで開く。切り替えのたびに保存する。初回は保存がないのでローカル。確認は `shared_prefs/ui.xml`
+- 下部ナビのセクション(ライブラリ / DLNA)は `UiPrefs`(SharedPreferences `ui`、キー `last_tab`、0=ライブラリ 1=DLNA)に保存し、起動時にそのセクションで開く。切り替えのたびに保存する。初回は保存がないのでライブラリ。確認は `shared_prefs/ui.xml`
+- UI: アプリアイコンの見た目(ランチャー上の表示)、横向き・タブレットなど大きい画面、フォントを大きくしたとき、再生キューの表示・並べ替え、ミニプレイヤーのスワイプ操作は未確認/未実装
 - ローカルの下位タブ(曲 / アルバム / アーティスト)と検索語は保存しない(`rememberSaveable` なので画面回転では残るが、アプリを終了すると消える)
 
 ### ライブラリ(一覧・ジャケット)
@@ -75,7 +76,17 @@
 - パスは `Music` を起点とした相対(ホームのパスは空)。保存済みの古い絶対パス(`Music` から始まるもの)も、ID が絶対なのでそのまま使える
 - `Music Server` の構成(実測): ルート 0 → `Browse Folders` / `Music`(1)/ `Pictures` / `Video`。`Music` → `Album`(1$7)/ `All Music`(1$4)/ `Artist`(1$6)/ `Folders` / `Genre` / `Playlists` / `Recently Added`。メタデータのない曲は、タイトルだけで補足が空になる
 - 画像の読み込みは Coil 3(`coil-compose` + `coil-network-okhttp`。http(s) には後者が必要。平文 http は `usesCleartextTraffic=true` で許可)
-- 一覧の行は `LibraryRow`、画像は `Artwork`(`LibraryRow.kt`)でローカルと DLNA を共通化。再生バーは埋め込みジャケット(`artworkData`)を優先し、なければ `artworkUri`
+- 一覧の行は `LibraryRow`、アルバムのカードは `AlbumCard`、画像は `Artwork`(`LibraryRow.kt`)でローカルと DLNA を共通化。ミニプレイヤーと全画面「再生中」は埋め込みジャケット(`artworkData`)を優先し、なければ `artworkUri`
+
+### UI の構成(Material 3)
+- `MainActivity` → `MyPlayerTheme`(`Theme.kt`)→ `AppRoot`(`AppRoot.kt`)。エッジ・ツー・エッジ。ダイナミックカラー(Android 12+)とライト/ダークは端末設定に従う(起動直後の背景は `values/themes.xml` と `values-night/themes.xml`)
+- `AppRoot`: 権限の要求、`MediaController` の接続、ライブラリ読み込み(ローカルは `Dispatchers.IO`)、下部の「ミニプレイヤー + ナビ(ライブラリ / DLNA)」、ミニプレイヤーをタップで開く全画面「再生中」(`AnimatedVisibility`。開いている間は戻るキーでまず閉じる)
+- 再生状態は `PlaybackUiState`(`rememberPlaybackUiState`)で 1 か所の `Player.Listener` から受け、ミニプレイヤーと全画面で共有する(再生中・曲・位置・シャッフル・リピート)。位置は再生中だけ 500ms ごとに更新
+- `LocalLibraryScreen`: 上部バー(タイトル + 検索アイコン。検索は `SearchTopBar` で、バーの中に入力欄が開く)+ タブ(曲 / アルバム / アーティスト)。アルバムは大きなジャケットのグリッド(`LazyVerticalGrid`)。再生中の曲は、タイトルをテーマ色にして右端にアイコンを出す
+- `DlnaScreen`: 上部バー(戻る・検索・サーバー再検索)+ タブ(ホーム / 曲 / アルバム / アーティスト)。フォルダの中身がすべてアルバムのときはグリッド、それ以外はリスト。戻るキーは「フォルダの奥 → 検索を閉じる → サーバー一覧」の順
+- 全画面「再生中」: 大きなジャケット(残りの高さに収まる正方形)、曲名、アーティスト — アルバム、出力フォーマットのチップとビットパーフェクトの状態、シーク、シャッフル/前/再生/次/リピート(なし → 全曲 → 1 曲)
+- アイコンは `material-icons-extended`(絵文字や文字記号は使わない)。アプリアイコンはアダプティブ(`mipmap-anydpi-v26/ic_launcher.xml`。背景は単色、前景は音符のベクター、モノクロ版つき)
+- 実機での注意: ミニプレイヤーの有無で画面下の位置が変わる。タップ座標は直前のスクショで確認する。`adb shell cmd uimode night no|yes` でライト/ダークを切り替えて確認できる(確認後は元に戻す)
 
 ### 検索
 - ローカル: `LocalLibrary.search()`。曲名・アーティスト・アルバム名で絞り込み、空白区切りの語はすべて含む(AND)。NFKC で正規化し小文字にするので、全角/半角・大文字/小文字は区別しない。結果は「アーティスト / アルバム / 曲」の見出しつき。曲をタップすると、結果の曲がキューになる
