@@ -11,10 +11,30 @@ android {
         applicationId = "net.minittu.rinplay"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1"
+        // リリースのワークフローが -PappVersionCode / -PappVersionName で渡す(なければ開発用の値)
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("appVersionName") as String?) ?: "0.1"
         ndk {
             abiFilters += listOf("arm64-v8a")
+        }
+    }
+
+    // リリースの署名。鍵はリポジトリに入れず、環境変数で渡す(GitHub Actions の Secrets)。
+    // 渡さなければ、署名なしの APK になる。
+    val keystorePath = System.getenv("RINPLAY_KEYSTORE")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("RINPLAY_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("RINPLAY_KEY_ALIAS")
+                keyPassword = System.getenv("RINPLAY_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
