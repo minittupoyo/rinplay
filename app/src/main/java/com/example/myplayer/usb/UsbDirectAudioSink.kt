@@ -38,8 +38,14 @@ class UsbDirectAudioSink(
     private var rate = 0
     private var encoding = C.ENCODING_INVALID
     private var written = 0L // 送り込んだフレーム数
-    private var startUs = 0L
-    private var needStart = true
+    private var needStart = true // 次のバッファが、新しい曲(や不連続)の先頭
+
+    // 再生位置の対応表。[書き込んだフレーム番号, そのフレームの再生位置(µs)]。
+    // 曲の切り替えでバッファを捨てずに続けるため、曲ごとに 1 つ足す(再生がそのフレームに達したら、位置が切り替わる)。
+    private val checkpoints = ArrayList<LongArray>()
+
+    // 別の出力(レートなど)への切り替えを、いま溜まっている分を再生し終えるまで待たせている設定。
+    private var pendingConfig: AudioSink.AudioSinkConfig? = null
     private var handledEos = false
     private var playing = false
     private var scratch = ByteArray(0)
@@ -51,10 +57,39 @@ class UsbDirectAudioSink(
 
     override fun configure(config: AudioSink.AudioSinkConfig) {
         lastConfig = config
+        // 直結中の曲の切り替えは、溜まっている分(リングと転送中の約 3 秒)を捨てずに続ける。
+        // ExoPlayer は、再生が済むのを待たずに次の曲の configure を呼んでくる。
+        if (useUsb && continueOrDefer(config)) return
+        applyConfig(config)
+    }
+
+    private fun applyConfig(config: AudioSink.AudioSinkConfig) {
         if (tryUseUsb(config)) return
         if (useUsb) closeUsb()
         useUsb = false
         super.configure(config)
+    }
+
+    /**
+     * 直結中に次の曲の設定が来たとき。同じ出力のまま続けられるなら続け(true)、別の出力が要るなら、
+     * 溜まっている分を再生し終えるまで待たせる(true)。待たせる分が無ければ、すぐ切り替える(false)。
+     */
+    private fun continueOrDefer(config: AudioSink.AudioSinkConfig): Boolean {
+        val out = usb ?: return false
+        if (usbLost || !out.alive) return false
+        val f = config.format
+        val bits = inputBits(f)
+        if (bits != null && out.rate == f.sampleRate && out.alt.bitResolution >= bits) {
+            format = f
+            encoding = f.pcmEncoding
+            carryLen = 0 // 端数は前の曲の形式なので捨てる
+            handledEos = false
+            needStart = true // 次のバッファで、新しい曲の位置を対応表に足す
+            return true
+        }
+        if (written <= out.framesPlayed()) return false
+        pendingConfig = config
+        return true
     }
 
     /** USB 直結で出せるなら、そちらに切り替えて true を返す。できなければ何も変えずに false。 */
@@ -129,12 +164,21 @@ class UsbDirectAudioSink(
     private fun resetStreamState() {
         written = 0
         needStart = true
+        checkpoints.clear()
         carryLen = 0
         handledEos = false
         usb?.flush()
     }
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
+        // 別の出力への切り替えを待たせているなら、溜まっている分を再生し終えるまで、新しいデータは受け取らない
+        // (ExoPlayer がまた呼んでくる)。再生し終えたら、切り替える。
+        pendingConfig?.let { cfg ->
+            val o = usb
+            if (!usbLost && o != null && o.alive && written > o.framesPlayed()) return false
+            pendingConfig = null
+            applyConfig(cfg)
+        }
         // OS 経由で再生中に DAC が挿されていたら、直結に切り替える。
         if (!useUsb && retryUsb) {
             retryUsb = false
@@ -149,12 +193,14 @@ class UsbDirectAudioSink(
             val now = android.os.SystemClock.elapsedRealtime()
             if (now - lastLossMs < 5000) usbFailed = true
             lastLossMs = now
+            pendingConfig = null
             closeUsb()
             useUsb = false
             throw AudioSink.WriteException(-1, format!!, /* isRecoverable = */ true)
         }
         if (needStart) {
-            startUs = presentationTimeUs
+            // 新しい曲(や不連続)の先頭。ここまでに書き込んだフレームの次から、この位置になる。
+            checkpoints.add(longArrayOf(written, presentationTimeUs))
             needStart = false
         }
         val inBytes = when (encoding) {
@@ -242,7 +288,7 @@ class UsbDirectAudioSink(
     }
 
     override fun handleDiscontinuity() {
-        if (!useUsb) super.handleDiscontinuity()
+        if (useUsb) needStart = true else super.handleDiscontinuity()
     }
 
     override fun playToEndOfStream() {
@@ -264,8 +310,14 @@ class UsbDirectAudioSink(
     override fun getCurrentPositionUs(sourceEnded: Boolean): Long {
         if (!useUsb) return super.getCurrentPositionUs(sourceEnded)
         val out = usb ?: return AudioSink.CURRENT_POSITION_NOT_SET
-        if (needStart) return AudioSink.CURRENT_POSITION_NOT_SET
-        return startUs + out.framesPlayed() * 1_000_000L / rate
+        if (checkpoints.isEmpty()) return AudioSink.CURRENT_POSITION_NOT_SET
+        val played = out.framesPlayed()
+        // 再生が達している最後の対応表。それより前のものは要らない。
+        var idx = 0
+        while (idx + 1 < checkpoints.size && checkpoints[idx + 1][0] <= played) idx++
+        repeat(idx) { checkpoints.removeAt(0) }
+        val cp = checkpoints[0]
+        return cp[1] + (played - cp[0]).coerceAtLeast(0) * 1_000_000L / rate
     }
 
     override fun setVolume(volume: Float) {
@@ -273,10 +325,15 @@ class UsbDirectAudioSink(
     }
 
     override fun flush() {
-        if (useUsb) resetStreamState() else super.flush()
+        if (!useUsb) return super.flush()
+        // シークなど。溜まっている分は不要になるので、待たせていた切り替えがあれば、いま行う。
+        val pending = pendingConfig
+        pendingConfig = null
+        if (pending != null) applyConfig(pending) else resetStreamState()
     }
 
     override fun reset() {
+        pendingConfig = null
         if (useUsb) {
             closeUsb()
             useUsb = false
@@ -285,6 +342,7 @@ class UsbDirectAudioSink(
     }
 
     override fun release() {
+        pendingConfig = null
         closeUsb()
         useUsb = false
         super.release()
