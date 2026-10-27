@@ -18,6 +18,10 @@ class UsbOutput private constructor(
     val rate: Int,
     val alt: AsAlt,
     private val desc: UacDescriptor,
+    /** 開く前の DAC の音量。閉じるときに戻す(直結で下げた音量が、OS 経由の再生に残らないように)。 */
+    private val originalVolumes: List<Pair<Int, Int>>?,
+    private val appContext: Context,
+    private val guardKey: String,
 ) {
     @Volatile
     var alive = true
@@ -55,6 +59,12 @@ class UsbOutput private constructor(
         else UsbIsoNative.destroy(handle)
         synchronized(lock) {
             closed = true
+            // ドライバを付け直す前に、DAC の音量を元に戻す(claim している間しか操作できない)。
+            originalVolumes?.let {
+                val ok = UsbDac.restoreVolumes(conn, desc, it)
+                Log.i(TAG, "restore DAC volume to ${it.map { v -> v.second / 256.0 }}dB -> $ok")
+                if (ok) UsbVolumeGuard.clear(appContext, guardKey)
+            }
             releaseAll(conn, claimed)
             conn.close()
         }
@@ -82,15 +92,53 @@ class UsbOutput private constructor(
             d.alts.filter { it.pcm && it.channels == 2 && it.bitResolution >= bits }
                 .minByOrNull { it.bitResolution }
 
+        /** DAC の操作(開く・回復)を同時に行わないための鍵。 */
+        private val deviceLock = Any()
+
+        /**
+         * 前回、直結のまま閉じる処理を通らずに終わり、DAC の音量が下がったままなら、元に戻す。
+         * 権限がなければ何もしない(権限は、挿している間は残る)。DAC のドライバを一度切り離して付け直す。
+         */
+        fun recoverVolume(context: Context) = synchronized(deviceLock) {
+            val device = UsbDac.findAudioDevice(context) ?: return@synchronized
+            val usb = context.getSystemService(UsbManager::class.java)
+            if (!usb.hasPermission(device)) return@synchronized
+            val key = UsbVolumeGuard.key(device)
+            val saved = UsbVolumeGuard.get(context, key) ?: return@synchronized
+            val conn = usb.openDevice(device) ?: return@synchronized
+            var ok = false
+            try {
+                val desc = parseUac2(conn.rawDescriptors)
+                val ac = (0 until device.interfaceCount).map { device.getInterface(it) }.firstOrNull { it.id == desc?.acInterface }
+                if (desc != null && ac != null && conn.claimInterface(ac, true)) {
+                    ok = UsbDac.restoreVolumes(conn, desc, saved)
+                    releaseAll(conn, listOf(ac))
+                }
+            } finally {
+                conn.close()
+            }
+            Log.i(TAG, "recovered DAC volume to ${saved.map { it.second / 256.0 }}dB -> $ok")
+            if (ok) UsbVolumeGuard.clear(context, key)
+        }
+
         /** [rate] / [bits] で出力できるなら、DAC を開いて返す。できなければ null(権限なし・非対応など)。 */
-        fun open(context: Context, rate: Int, bits: Int): UsbOutput? {
+        fun open(context: Context, rate: Int, bits: Int): UsbOutput? = synchronized(deviceLock) { openLocked(context, rate, bits) }
+
+        private fun openLocked(context: Context, rate: Int, bits: Int): UsbOutput? {
             val device = UsbDac.findAudioDevice(context) ?: return null
             val usb = context.getSystemService(UsbManager::class.java)
             if (!usb.hasPermission(device)) return null
             val conn = usb.openDevice(device) ?: return null
+            val guardKey = UsbVolumeGuard.key(device)
             val claimed = mutableListOf<UsbInterface>()
+            // 音量を下げたあとに失敗したら、元に戻す。
+            var loweredDesc: UacDescriptor? = null
+            var loweredFrom: List<Pair<Int, Int>>? = null
             fun fail(msg: String): UsbOutput? {
                 Log.w(TAG, msg)
+                val d = loweredDesc
+                val o = loweredFrom
+                if (d != null && o != null && UsbDac.restoreVolumes(conn, d, o)) UsbVolumeGuard.clear(context, guardKey)
                 releaseAll(conn, claimed)
                 conn.close()
                 return null
@@ -119,13 +167,22 @@ class UsbOutput private constructor(
             // 音を出す前に DAC の音量を下げる。下げられないなら、最大音量で鳴りうるので USB 直結は使わない。
             // 音量を操作できない DAC(許可された場合)は、アプリでは音量を触らない(スライダーも出さない)。
             var range: UsbDac.VolumeRange? = null
+            var original: List<Pair<Int, Int>>? = null
             var volume = 0
             if (hasVolume) {
                 val r = UsbDac.queryVolumeRange(conn, desc) ?: return fail("no DAC volume control (featureUnit=${desc.featureUnitId} ch=${desc.volumeChannels})")
+                // 前回、閉じる処理を通らずに終わっていたら、DAC の音量は下がったまま(いま読める値は元の値ではない)。
+                // 保存してある元の値を使う。保存がなければ、いまの値を元の値として保存する(下げる前に、同期で)。
+                val saved = UsbVolumeGuard.get(context, guardKey)
+                original = saved ?: UsbDac.getVolumes(conn, desc)
+                if (saved != null) Log.w(TAG, "previous session did not restore the DAC volume; using the saved original ${saved.map { it.second / 256.0 }}")
+                else original?.let { UsbVolumeGuard.mark(context, guardKey, it) }
+                loweredDesc = desc
+                loweredFrom = original
                 volume = UsbVolume.snap(r, UsbVolume.startVolume())
                 if (!UsbDac.setVolume(conn, desc, volume)) return fail("cannot set DAC volume")
                 range = r
-                Log.i(TAG, "volume range=${r.min / 256.0}..${r.max / 256.0}dB set=${volume / 256.0}dB")
+                Log.i(TAG, "volume range=${r.min / 256.0}..${r.max / 256.0}dB set=${volume / 256.0}dB (original=${original?.map { it.second / 256.0 }})")
             } else {
                 Log.i(TAG, "DAC has no volume control; the volume is set on the DAC itself")
             }
@@ -144,7 +201,7 @@ class UsbOutput private constructor(
                 alt.maxPacketSize, interval, bpf, rate,
             )
             Log.i(TAG, "opened ${rate}Hz ${alt.bitResolution}bit/${alt.subslotSize * 8}bit-slot alt=${alt.altSetting}")
-            return UsbOutput(conn, claimed, handle, rate, alt, desc).also { UsbVolume.attach(it, range, volume) }
+            return UsbOutput(conn, claimed, handle, rate, alt, desc, original, context.applicationContext, guardKey).also { UsbVolume.attach(it, range, volume) }
         }
     }
 }

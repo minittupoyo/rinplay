@@ -115,6 +115,26 @@ object UsbDac {
         }
     }
 
+    /** 各チャンネルの現在の音量(GET_CUR)。(チャンネル, 1/256 dB)の組。読めなければ null。 */
+    fun getVolumes(conn: UsbDeviceConnection, d: UacDescriptor): List<Pair<Int, Int>>? {
+        val result = mutableListOf<Pair<Int, Int>>()
+        for (ch in volumeChannels(d)) {
+            val b = ByteArray(2)
+            // 0xA1 = device-to-host / class / interface。bRequest 1 = GET_CUR。
+            val n = conn.controlTransfer(0xA1, 1, (2 shl 8) or ch, (d.featureUnitId shl 8) or d.acInterface, b, 2, 1000)
+            if (n != 2) return null
+            result += ch to ((b[0].toInt() and 0xFF) or (b[1].toInt() shl 8)).toShort().toInt()
+        }
+        return result
+    }
+
+    /** [getVolumes] で読んだ音量に戻す。 */
+    fun restoreVolumes(conn: UsbDeviceConnection, d: UacDescriptor, volumes: List<Pair<Int, Int>>): Boolean =
+        volumes.all { (ch, db256) ->
+            val b = byteArrayOf(db256.toByte(), (db256 shr 8).toByte())
+            conn.controlTransfer(0x21, 1, (2 shl 8) or ch, (d.featureUnitId shl 8) or d.acInterface, b, 2, 1000) == 2
+        }
+
     /** DAC があれば、権限を確認する。権限があれば(または許可されたあとで)[onReady] を呼ぶ。 */
     fun prepare(context: Context, onReady: () -> Unit = {}) {
         val device = findAudioDevice(context) ?: return

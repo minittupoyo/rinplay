@@ -21,6 +21,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.example.myplayer.usb.UsbDac
 import com.example.myplayer.usb.UsbDirectAudioSink
+import com.example.myplayer.usb.UsbOutput
 import com.example.myplayer.usb.UsbVolume
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,8 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         UsbVolume.init(this)
+        // 前回、直結のまま強制終了などで終わり、DAC の音量が下がったままなら、元に戻す(OS 経由の再生が小さい音のままにならないように)。
+        scope.launch(Dispatchers.IO) { UsbOutput.recoverVolume(this@PlaybackService) }
         // 直接出力が ON のとき(起動時と、設定で ON にされたとき)、DAC があれば権限を確認する。
         // 許可されたら、再生中でも直結に切り替える。OFF の間は DAC に触らない。
         scope.launch {
