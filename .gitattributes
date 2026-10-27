@@ -1,0 +1,12 @@
+* text=auto
+
+# シェルスクリプトは常に LF(CRLF だと Linux/macOS で動かない)
+gradlew text eol=lf
+*.sh text eol=lf
+
+# バッチファイルは CRLF
+*.bat text eol=crlf
+
+# バイナリ
+*.jar binary
+*.png binary
