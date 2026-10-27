@@ -46,7 +46,6 @@ class UsbDirectAudioSink(
     // 前のバッファの端に残った、1 フレームに満たない端数(次のバッファの先頭で補う)
     private val carry = ByteArray(8)
     private var carryLen = 0
-    private var firstBuffer = true
     private var stalledSinceMs = 0L
 
     override fun configure(config: AudioSink.AudioSinkConfig) {
@@ -127,7 +126,6 @@ class UsbDirectAudioSink(
         written = 0
         needStart = true
         carryLen = 0
-        firstBuffer = true
         handledEos = false
         usb?.flush()
     }
@@ -162,10 +160,6 @@ class UsbDirectAudioSink(
         }
         val inFrame = inBytes * 2
         val outFrame = out.bytesPerFrame
-        if (firstBuffer) {
-            firstBuffer = false
-            Log.i(TAG, "first buffer: encoding=$encoding remaining=${buffer.remaining()} inFrame=$inFrame order=${buffer.order()}")
-        }
 
         // 前のバッファの端に 1 フレームに満たない端数が残っていたら、このバッファの先頭で補って 1 フレームにして出す。
         if (carryLen > 0) {
@@ -186,7 +180,6 @@ class UsbDirectAudioSink(
         }
         // 端が 1 フレームに満たなければ、次のバッファに持ち越す(残したままだと永久に進めなくなる)。
         if (buffer.hasRemaining() && buffer.remaining() < inFrame) {
-            Log.i(TAG, "partial frame carried: ${buffer.remaining()} of $inFrame bytes")
             while (buffer.hasRemaining()) carry[carryLen++] = buffer.get()
         }
         return accepted(buffer, out, progressed = frames > 0)

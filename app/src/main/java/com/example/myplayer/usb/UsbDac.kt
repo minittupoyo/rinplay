@@ -65,11 +65,9 @@ object UsbDac {
             return conn.controlTransfer(0xA1, 2, 1 shl 8, wIndex, b, len, 1000) to b
         }
         val head = get(2)
-        Log.i(TAG, "GET_RANGE head n=${head.first}")
         if (head.first < 2) return emptyList()
         val count = (head.second[0].toInt() and 0xFF) or ((head.second[1].toInt() and 0xFF) shl 8)
         val (n, buf) = get(2 + 12 * count)
-        Log.i(TAG, "GET_RANGE full n=$n count=$count")
         fun i32(o: Int) = (buf[o].toInt() and 0xFF) or ((buf[o + 1].toInt() and 0xFF) shl 8) or
             ((buf[o + 2].toInt() and 0xFF) shl 16) or ((buf[o + 3].toInt() and 0xFF) shl 24)
         return (0 until count).takeWhile { 2 + it * 12 + 12 <= n }

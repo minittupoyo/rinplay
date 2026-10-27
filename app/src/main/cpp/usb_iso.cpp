@@ -291,18 +291,13 @@ JNIEXPORT jint JNICALL Java_com_example_myplayer_usb_UsbIsoNative_run(JNIEnv*, j
                 std::lock_guard<std::mutex> g(s->mu);
                 if (sl->gen == s->gen) s->framesPlayed += sl->realFrames;
             }
-            // 診断: パケット単位のエラーと、約 2 秒ごとの進み具合(8 URB × 4ms で 1 周 32ms → 500 URB ≒ 2 秒)。
+            // パケット単位のエラー(ログは最初の 20 件まで)。
             if (r->error_count > 0 && s->errors++ < 20) {
                 LOGW("iso error_count=%d status=%d first=%d", r->error_count, r->status, r->iso_frame_desc[0].status);
             }
             s->lastStart = r->start_frame;
+            s->outDone++;
             lastOutMs = nowMs();
-            if (++s->outDone % 2000 == 0) {
-                LOGI("progress out=%llu fb=%llu played=%lld curQ16=%llu underruns=%d errors=%d start_frame=%u",
-                     (unsigned long long)s->outDone, (unsigned long long)s->fbDone,
-                     (long long)s->framesPlayed.load(), (unsigned long long)s->curQ16,
-                     s->underruns.load(), s->errors.load(), r->start_frame);
-            }
             fillOut(s, *sl);
         }
         if (!submit(s, *sl)) { result = -4; break; }
