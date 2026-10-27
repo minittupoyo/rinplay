@@ -22,6 +22,30 @@ object OutputFormatState {
     }
 }
 
+/**
+ * 曲ごとの元ファイルの形式。キーは mediaId。
+ * ExoPlayer は次の曲を先読みして形式を通知するので、再生中の曲の分を上書きしないよう、曲ごとに持つ。
+ */
+object SourceFormatState {
+    private const val MAX_ENTRIES = 8
+
+    private val _formats = MutableStateFlow<Map<String, SourceFormat>>(emptyMap())
+    val formats: StateFlow<Map<String, SourceFormat>> = _formats
+
+    fun put(mediaId: String, format: SourceFormat) {
+        // 古いものから捨てる(LinkedHashMap の挿入順)。同じ曲を入れ直したら最後に回す。
+        val next = LinkedHashMap(_formats.value)
+        next.remove(mediaId)
+        next[mediaId] = format
+        while (next.size > MAX_ENTRIES) next.remove(next.keys.first())
+        _formats.value = next
+    }
+
+    fun clear() {
+        _formats.value = emptyMap()
+    }
+}
+
 /** 「44.1 kHz」「96 kHz」のようなサンプリングレートの表示。 */
 val OutputFormat.sampleRateLabel: String
     get() {

@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -76,9 +77,14 @@ fun LocalLibraryScreen(
         if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex) else closeSearch()
     }
 
+    // 一覧の各行のタップ処理は、一度作られると使い回される。起動直後(再生サービスにつながる前)の
+    // controller = null を握ったままにならないよう、常に最新の値を読む。
+    val latestController by rememberUpdatedState(controller)
+    val latestOnPlayStarted by rememberUpdatedState(onPlayStarted)
+
     fun play(tracks: List<LocalTrack>, index: Int) {
-        val ctrl = controller ?: return
-        onPlayStarted()
+        val ctrl = latestController ?: return
+        latestOnPlayStarted()
         ctrl.setMediaItems(tracks.map { it.item }, index, 0L)
         ctrl.prepare()
         ctrl.play()

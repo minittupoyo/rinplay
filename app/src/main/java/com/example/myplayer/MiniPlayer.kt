@@ -28,12 +28,12 @@ import androidx.compose.ui.unit.dp
 
 /**
  * 画面下の小さなプレイヤー。タップで全画面の「再生中」を開く。
- * 補足の行には、アーティストと、いまの出力フォーマット(高音質の確認用)を常に出す。
+ * 補足の行には、アーティストと、再生中のファイルの形式(高音質の確認用)を常に出す。
  */
 @Composable
 fun MiniPlayer(
     state: PlaybackUiState,
-    format: OutputFormat?,
+    source: SourceFormat?,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -57,9 +57,10 @@ fun MiniPlayer(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // アーティスト · 元ファイルの形式(FLAC 24bit 48kHz / MP3 320kbps 44.1kHz など)
                     val subtitle = listOfNotNull(
                         metadata.artist?.toString()?.takeIf { it.isNotEmpty() },
-                        format?.shortLabel(),
+                        source?.label(),
                     ).joinToString(" · ")
                     if (subtitle.isNotEmpty()) {
                         Text(

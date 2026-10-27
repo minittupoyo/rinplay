@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -238,13 +239,17 @@ fun DlnaScreen(
     }
     BackHandler(enabled = server != null) { goBack() }
 
+    // 一覧の各行のタップ処理は使い回されるので、起動直後の controller = null を握ったままにならないよう、
+    // 常に最新の値を読む。
+    val latestController by rememberUpdatedState(controller)
+
     /** 一覧の項目を開く。フォルダなら中へ、曲なら再生(続きのページはキューに足す)。 */
     fun open(entry: DlnaEntry) {
         if (entry.isContainer) {
             path.add(Crumb(entry.id, entry.title))
             return
         }
-        val ctrl = controller ?: return
+        val ctrl = latestController ?: return
         val queue = entries.filter { !it.isContainer }
         repository.cancelQueueLoading()
         ctrl.setMediaItems(queue.mapNotNull { it.mediaItem }, queue.indexOf(entry), 0L)
@@ -344,7 +349,7 @@ fun DlnaScreen(
                 currentMediaId = currentMediaId,
                 onOpenContainer = { path.add(Crumb(it.id, it.title)) },
                 onPlay = { tracks, index ->
-                    val ctrl = controller
+                    val ctrl = latestController
                     if (ctrl != null) {
                         repository.cancelQueueLoading()
                         ctrl.setMediaItems(tracks.mapNotNull { it.mediaItem }, index, 0L)

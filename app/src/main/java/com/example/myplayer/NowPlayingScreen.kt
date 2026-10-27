@@ -53,6 +53,7 @@ import androidx.media3.common.Player
 @Composable
 fun NowPlayingScreen(
     state: PlaybackUiState,
+    source: SourceFormat?,
     format: OutputFormat?,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
@@ -125,21 +126,28 @@ fun NowPlayingScreen(
                 )
             }
 
-            // 高音質の確認用。実際に AudioTrack に渡している形式と、ビットパーフェクトの状態。
-            if (format != null) {
+            // 高音質の確認用。主役は再生中のファイルの形式(FLAC 24bit 48kHz など)。
+            // その下に、実際に AudioTrack に渡している出力形式と、ビットパーフェクトの状態を小さく出す。
+            if (source != null) {
                 AssistChip(
                     onClick = {},
-                    label = { Text(format.fullLabel()) },
+                    label = { Text(source.label()) },
                     leadingIcon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     modifier = Modifier.padding(top = 12.dp),
                 )
-                if (format.bitPerfect.isNotEmpty()) {
-                    Text(
-                        text = "ビットパーフェクト: ${format.bitPerfect}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+            }
+            if (format != null) {
+                val detail = buildList {
+                    add("出力 ${format.sampleRateLabel} · ${format.bitDepthLabel}")
+                    if (format.bitPerfect.isNotEmpty()) add("ビットパーフェクト: ${format.bitPerfect}")
+                }.joinToString("\n")
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
 
             Slider(

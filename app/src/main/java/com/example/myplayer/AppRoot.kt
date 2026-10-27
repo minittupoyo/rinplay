@@ -94,6 +94,9 @@ fun AppRoot() {
     }
     val playback = rememberPlaybackUiState(controller)
     val format by OutputFormatState.format.collectAsState()
+    // 再生中の曲の、元ファイルの形式。先読み中の次の曲の分と取り違えないよう、mediaId で引く。
+    val sources by SourceFormatState.formats.collectAsState()
+    val source = playback?.mediaItem?.mediaId?.let { sources[it] }
 
     // --- ライブラリ ---
     val dlna = remember { DlnaRepository(context.applicationContext) }
@@ -129,7 +132,7 @@ fun AppRoot() {
             bottomBar = {
                 Column {
                     if (playback != null && playback.hasMedia) {
-                        MiniPlayer(playback, format, onExpand = { expanded = true })
+                        MiniPlayer(playback, source, onExpand = { expanded = true })
                     }
                     NavigationBar {
                         NavigationBarItem(
@@ -173,7 +176,7 @@ fun AppRoot() {
             ) {
                 // 開いている間は、戻るキーでまず閉じる。ここで登録するので、下の画面より優先される。
                 BackHandler { expanded = false }
-                NowPlayingScreen(playback, format, onCollapse = { expanded = false })
+                NowPlayingScreen(playback, source, format, onCollapse = { expanded = false })
             }
         }
     }

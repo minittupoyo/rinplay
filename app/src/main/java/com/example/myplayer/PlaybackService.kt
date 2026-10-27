@@ -41,6 +41,10 @@ class PlaybackService : MediaSessionService() {
                 format: Format,
                 decoderReuseEvaluation: DecoderReuseEvaluation?,
             ) {
+                // 元ファイルの形式を、曲ごとに記録する(画面の「FLAC 24bit 48kHz」など)。
+                val mediaId = eventTime.timeline.mediaIdOf(eventTime.windowIndex, eventTime.mediaPeriodId?.periodUid)
+                val source = format.toSourceFormat()
+                if (mediaId != null && source != null) SourceFormatState.put(mediaId, source)
                 if (format.sampleRate > 0) {
                     bitPerfectStatus = BitPerfect.apply(this@PlaybackService, format.sampleRate)
                 }
@@ -78,6 +82,7 @@ class PlaybackService : MediaSessionService() {
         session = null
         BitPerfect.clear(this)
         OutputFormatState.set(null)
+        SourceFormatState.clear()
         super.onDestroy()
     }
 }

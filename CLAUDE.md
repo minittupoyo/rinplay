@@ -14,6 +14,7 @@
 - パッケージ名: `com.example.myplayer`(変更したらここも更新)
 - USB接続中は `adb shell svc power stayon usb` で画面点灯を維持
 - テスト音源: `/sdcard/Music/` に FLAC 4 つ(44.1k/16, 48k/16, 88.2k/24, 96k/24)。ffmpeg で生成した正弦波(タグなし。アルバム名はフォルダ名の `Music`、アーティストは `Generated` になる)
+- 形式表示の確認用: `/sdcard/Music/TestFormats/` に、アルバム `Formats` / Fmt Test の 4 曲(`MP3 320k`、`MP3 VBR V2`、`AAC 256k`、`FLAC 24bit 48k`)と、タグなしの WAV 24bit 1 つ(`fmt_wav_24`)。ffmpeg で生成(WAV はタグなしだと MediaStore に音楽として載らず、アルバムは `TestFormats`、アーティストは不明になる)
 - ライブラリ表示の確認用: `/sdcard/Music/TestAlbums/` に、ジャケット埋め込み・タグ付きの FLAC 5 つ(`Blue Album` / Artist A が 3 曲、`Red Album` / Artist B が 2 曲)。ffmpeg の `-disposition:v attached_pic` で画像を埋めた
 
 ## よく使うコマンド
@@ -37,7 +38,9 @@
 ## 実装上の注意
 
 ### 出力表示とビットパーフェクト
-- 画面の出力フォーマット(ミニプレイヤーの補足の `48 kHz · 16-bit`、全画面「再生中」のチップ)は、AudioTrack に渡した形式(`onAudioTrackInitialized`)。端末の実出力ではない。実出力は `dumpsys media.audio_flinger` で、アプリ(uid)のトラックが乗るスレッドを見る
+- 画面の主な表示は、再生中のファイル自体の形式(`SourceFormat`。ミニプレイヤーの補足、全画面「再生中」のチップ。例: `FLAC 24bit 48kHz` / `MP3 320kbps 44.1kHz`)。全画面の小さい文字の「出力 48 kHz · 32-bit float」は、AudioTrack に渡した形式(`onAudioTrackInitialized`)で、両者は別物(FLAC 24bit の出力が 32-bit float になる等)。以前は出力側だけを出していたため、DLNA の MP3 320kbps が「16-bit」と見えていた
+- 元ファイルの形式は `PlaybackService.onAudioInputFormatChanged` の `Format` から作る(`SourceFormat.kt`)。実機で確認した値: FLAC / WAV は `pcmEncoding` からビット深度(16/24)が取れる。AAC は公称ビットレート(`Format.bitrate`。256kbps を 256 と出す。実測平均は 251)、MP3 は平均(CBR 320kbps → 320366bps → 320、VBR は実際の平均。MediaStore の `bitrate` 列は VBR で外れる(224000 と出たが実際は 49kbps)ので使わない)。ロスレスはビットレートを出さず、ロッシーはビット深度を出さない
+- ExoPlayer は次の曲を先読みして `onAudioInputFormatChanged` を通知するので、元ファイルの形式は 1 変数ではなく曲ごと(`SourceFormatState`、キーは mediaId、最大 8 件)に持ち、再生中の曲の mediaId で引く。同じ出力形式の曲が続くと AudioTrack が使い回されて `onAudioTrackInitialized` が来ないので、出力側(`OutputFormatState`)は曲ごとの情報の根拠にならない端末の実出力ではない。実出力は `dumpsys media.audio_flinger` で、アプリ(uid)のトラックが乗るスレッドを見る
 - `setEnableAudioFloatOutput(true)` を維持する。false にすると 24bit FLAC が 16bit 出力になる
 - AudioTrack の解放イベントは、新トラック作成後に届くことがある。出力表示は「生きているトラック数」で消す(構成の比較はしない)
 - ビットパーフェクトは Android 14+ の `setPreferredMixerAttributes`。要点:
@@ -86,6 +89,7 @@
 - `DlnaScreen`: 上部バー(戻る・検索・サーバー再検索)+ タブ(ホーム / 曲 / アルバム / アーティスト)。フォルダの中身がすべてアルバムのときはグリッド、それ以外はリスト。戻るキーは「フォルダの奥 → 検索を閉じる → サーバー一覧」の順
 - 全画面「再生中」: 大きなジャケット(残りの高さに収まる正方形)、曲名、アーティスト — アルバム、出力フォーマットのチップとビットパーフェクトの状態、シーク、シャッフル/前/再生/次/リピート(なし → 全曲 → 1 曲)
 - アイコンは `material-icons-extended`(絵文字や文字記号は使わない)。アプリアイコンはアダプティブ(`mipmap-anydpi-v26/ic_launcher.xml`。背景は単色、前景は音符のベクター、モノクロ版つき)
+- Compose の落とし穴(実機で踏んだ): 一覧(`LazyColumn`)の各行のタップ処理は一度作られると使い回され、`controller`(再生サービスへの接続。起動直後は null)を値のまま握ると、タブを切り替えて一覧を作り直すまで再生が始まらない(起動 53 秒後でも `NONE` のまま)。タップ処理の中では `rememberUpdatedState(controller)` で常に最新の値を読む(`LocalLibraryScreen` / `DlnaScreen`)。再発したら「起動直後 4 秒でタップして再生が始まるか」で確認する
 - 実機での注意: ミニプレイヤーの有無で画面下の位置が変わる。タップ座標は直前のスクショで確認する。`adb shell cmd uimode night no|yes` でライト/ダークを切り替えて確認できる(確認後は元に戻す)
 
 ### 検索
