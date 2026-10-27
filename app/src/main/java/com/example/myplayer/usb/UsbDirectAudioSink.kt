@@ -94,6 +94,8 @@ class UsbDirectAudioSink(
 
     /** USB 直結で出せるなら、そちらに切り替えて true を返す。できなければ何も変えずに false。 */
     private fun tryUseUsb(config: AudioSink.AudioSinkConfig): Boolean {
+        // 設定で直接出力が OFF(既定)の間は、DAC に触らない。
+        if (!UsbVolume.directOutput.value) return false
         val f = config.format
         val bits = inputBits(f) ?: return false
         if (usbFailed) return false
@@ -186,13 +188,19 @@ class UsbDirectAudioSink(
         }
         if (!useUsb) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
         val out = usb
-        if (usbLost || out == null || !out.alive) {
+        // 設定で直接出力が OFF にされた。すぐ OS の出力に戻す。
+        val disabled = !UsbVolume.directOutput.value
+        if (disabled || usbLost || out == null || !out.alive) {
             // DAC が外れた等。OS の出力に戻す(ExoPlayer が再設定して、configure が呼ばれる)。
             // 短い間に続けて失われるなら、挿し直されるまで直結は試さない(開いては落ちる繰り返しを避ける)。
-            Log.w(TAG, "USB output lost; falling back")
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (now - lastLossMs < 5000) usbFailed = true
-            lastLossMs = now
+            if (disabled) {
+                Log.i(TAG, "USB direct output disabled; falling back")
+            } else {
+                Log.w(TAG, "USB output lost; falling back")
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastLossMs < 5000) usbFailed = true
+                lastLossMs = now
+            }
             pendingConfig = null
             closeUsb()
             useUsb = false

@@ -53,11 +53,12 @@
 
 ### USB DAC 直接出力(OS のミキサーを通さない)
 - `setPreferredMixerAttributes` が通らない端末(Pixel 6a + UA3)向けに、`usb/` で UAC2 の ISO 転送を自前で行う。`PlaybackService` が `UsbDirectAudioSink`(`ForwardingAudioSink`)に差し替え、使えないとき(DAC なし・権限なし・非対応のレート/形式・ステレオ以外・接続切れ)は元の `DefaultAudioSink` に任せる
+- **既定は OFF(オプトイン)**。設定タブの「USB DAC に直接出力する(ビットパーフェクト)」(`direct_output`、`UsbVolume.directOutput`)を ON にしたときだけ使う。直結では OS の音量が効かず DAC 側の音量で鳴るので、事故を避けるため。OFF の間は DAC に触らない(USB 権限のダイアログも出さず、`UsbDirectAudioSink` は常に OS 経由)。ON にすると(起動時にも ON なら)権限を要求し、許可されたら、再生中でも直結に切り替える。OFF にしたら、直結中でもすぐ OS 経由に戻す(`USB direct output disabled; falling back`)。初期音量・音量を保持する・音量調整のない DAC の設定は、ON のときだけ表示する。既存のインストールも、更新後は OFF になる
 - 構成: `UsbDacDescriptor.kt`(rawDescriptors の UAC2 解析)/ `UsbDac.kt`(検出・権限・GET_RANGE / SET_CUR / GET_CUR)/ `UsbOutput.kt`(claim・クロック設定・alt 選択・スレッド)/ `cpp/usb_iso.cpp`(usbdevfs の ISO URB を 8 本、フィードバック EP の 16.16 でレート調整、不足時は無音)/ `UsbDirectAudioSink.kt`
 - UA3(実測): UAC2、クロック ID 5、AS は IF1(alt1=16bit・alt2=24bit・alt3=32bit・alt4=DSD 用らしい)、出力 EP 0x01(非同期 ISO、maxPacket 776、interval 1)、フィードバック EP 0x81。対応レートは 32k/44.1k/48k/64k/88.2k/96k/128k/176.4k…(15 種の離散値)
 - 制御転送(GET_RANGE など)は、`claimInterface(force=true)` でカーネルの snd-usb-audio を切り離してからでないと `-1` で失敗する。claim 中は OS の音(通知音など)がこの DAC に出ない
 - Java の USB API は ISO 転送に非対応なので、`UsbDeviceConnection.fileDescriptor` を JNI に渡して ioctl(SUBMITURB / REAPURB)を直接叩く。NDK 28.2 / CMake 3.22.1、abi は arm64-v8a のみ
-- USB 権限は再インストールのたびに外れ、起動時にダイアログが出る。ダイアログが出ている間にほかの場所をタップするとキャンセル扱いになり、そのセッションは OS 経由の通常出力にフォールバックする
+- (直接出力が ON のとき)USB 権限は再インストールのたびに外れ、起動時にダイアログが出る。ダイアログが出ている間にほかの場所をタップするとキャンセル扱いになり、そのセッションは OS 経由の通常出力にフォールバックする
 - Galaxy(SM-S942Q / SM8850 / Android 17)+ UA3 での不具合: OUT の ISO URB を 8 本 × 32 パケット(常時 256 TRB)積むと、約 1 秒(URB 247 件)で OUT の完了だけが止まる(フィードバック IN は動き続け、エラーも出ず、取り消して投げ直しても戻らない。再生位置が数秒で止まる)。16 本 × 8 パケット(128 TRB = 16ms)に減らすと止まらない(20 秒、アンダーラン 0 件)。xHCI の ISO リングが 1 セグメント 256 TRB を超える深さを積むと詰まる、という見立て(カーネルのログは読めず、原因までは未確認)。`usb_iso.cpp` の `kOutUrbs` / `kOutPackets` を変えるときは、総 TRB を 256 未満に保つ。Pixel 6a は 8 × 32 でも問題なく、16 × 8 でも 30 秒、アンダーラン 0 件(曲の切り替えで 2 件。下記)。完了が 0.6 秒来ないときは、状態を `STALL` としてログに出し、全 URB を取り消して投げ直す(最大 5 回)ウォッチドッグがある
 - DAC を閉じるときは、claim を AS → AC の順に解放する(`UsbOutput.releaseAll`)。AC を先に解放すると、カーネルの snd-usb-audio が AS を握られたまま付き直り、ALSA のカードが不完全になる(`controlC1` だけが登録され、OS 経由の再生が `BUFFERING` ⇄ `PLAYING` を 1 秒ごとに繰り返し、位置が 1 秒に約 0.25 秒しか進まない)。AS → AC の順だと `pcmC1D0p` / `controlC1` が両方登録され、OS 経由の再生が戻る(Galaxy + ZH3 で確認)。`USBDEVFS_CONNECT`(`attachKernelDriver`)は保険で、すでに付いていると EBUSY(-16)
 - DAC に触る(claim する)前に、使えるかを判定する。claim 後に失敗して放置すると、ドライバが切り離されたまま OS 経由の再生が壊れる

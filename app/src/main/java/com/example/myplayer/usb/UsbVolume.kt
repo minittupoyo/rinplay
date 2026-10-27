@@ -22,6 +22,7 @@ object UsbVolume {
     private const val KEY_INITIAL = "initial_db256"
     private const val KEY_KEEP = "keep_volume"
     private const val KEY_ALLOW_FIXED = "allow_no_volume_dac"
+    private const val KEY_DIRECT = "direct_output"
     private const val KEY_LAST = "last_db256"
 
     private val _state = MutableStateFlow<UsbVolumeState?>(null)
@@ -32,6 +33,14 @@ object UsbVolume {
 
     private val _keep = MutableStateFlow(false)
     val keep: StateFlow<Boolean> = _keep
+
+    private val _direct = MutableStateFlow(false)
+
+    /**
+     * USB DAC への直接出力(ビットパーフェクト)を使うか。既定 OFF。
+     * 直結では OS の音量が効かず、DAC 側の音量で鳴るので、使う人が自分で ON にする。OFF の間は DAC に触らない。
+     */
+    val directOutput: StateFlow<Boolean> = _direct
 
     private val _allowFixed = MutableStateFlow(false)
     /** DAC 自身の音量を操作できない機種(据え置き型の DAC / アンプなど)でも、USB 直結を使うか。既定 OFF。 */
@@ -49,6 +58,7 @@ object UsbVolume {
         _initial.value = p.getInt(KEY_INITIAL, DEFAULT_DB256).coerceIn(INITIAL_MIN_DB256, INITIAL_MAX_DB256)
         _keep.value = p.getBoolean(KEY_KEEP, false)
         _allowFixed.value = p.getBoolean(KEY_ALLOW_FIXED, false)
+        _direct.value = p.getBoolean(KEY_DIRECT, false)
     }
 
     /** 保持する設定が ON で、保存された最後の音量があればそれ。なければ初期音量。 */
@@ -84,6 +94,11 @@ object UsbVolume {
         session = db256
         if (_keep.value) prefs?.edit()?.putInt(KEY_LAST, db256)?.apply()
         apply(db256)
+    }
+
+    fun setDirectOutput(enabled: Boolean) {
+        _direct.value = enabled
+        prefs?.edit()?.putBoolean(KEY_DIRECT, enabled)?.apply()
     }
 
     fun setAllowFixed(allow: Boolean) {

@@ -19,19 +19,28 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.example.myplayer.usb.UsbDac
+import com.example.myplayer.usb.UsbDirectAudioSink
+import com.example.myplayer.usb.UsbVolume
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 @UnstableApi
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
-    private var usbSink: com.example.myplayer.usb.UsbDirectAudioSink? = null
+    private var usbSink: UsbDirectAudioSink? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val usbReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     Log.i("PlaybackService", "USB device attached")
-                    com.example.myplayer.usb.UsbDac.prepare(context) { usbSink?.onUsbAttached() }
+                    if (UsbVolume.directOutput.value) UsbDac.prepare(context) { usbSink?.onUsbAttached() }
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     Log.i("PlaybackService", "USB device detached")
@@ -43,8 +52,14 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        com.example.myplayer.usb.UsbVolume.init(this)
-        com.example.myplayer.usb.UsbDac.prepare(this)
+        UsbVolume.init(this)
+        // 直接出力が ON のとき(起動時と、設定で ON にされたとき)、DAC があれば権限を確認する。
+        // 許可されたら、再生中でも直結に切り替える。OFF の間は DAC に触らない。
+        scope.launch {
+            UsbVolume.directOutput.collect { enabled ->
+                if (enabled) UsbDac.prepare(this@PlaybackService) { usbSink?.onUsbAttached() }
+            }
+        }
         // USB DAC が使えるときは UsbDirectAudioSink が OS のミキサーを通さずに出す。使えなければ通常の出力。
         val renderers = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
@@ -52,7 +67,7 @@ class PlaybackService : MediaSessionService() {
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink? = super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
-                ?.let { com.example.myplayer.usb.UsbDirectAudioSink(context, it).also { sink -> usbSink = sink } }
+                ?.let { UsbDirectAudioSink(context, it).also { sink -> usbSink = sink } }
         }.setEnableAudioFloatOutput(true)
 
         // DAC の挿抜を監視する。挿されたら権限を確認して、直結を試せるようにする(再生中なら切り替える)。
@@ -124,6 +139,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         unregisterReceiver(usbReceiver)
+        scope.cancel()
         session?.run {
             player.release()
             release()

@@ -21,12 +21,34 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.myplayer.usb.UsbVolume
 
-/** 設定。今は USB DAC の初期音量だけ。 */
+/** 設定。USB DAC への直接出力と、その音量まわり。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(modifier: Modifier = Modifier) {
     Column(modifier = modifier.fillMaxSize()) {
         TopAppBar(title = { Text("設定") })
+
+        val direct by UsbVolume.directOutput.collectAsState()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                Text("USB DAC に直接出力する(ビットパーフェクト)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "OS のミキサーを通さず、USB DAC に直接出力します。サンプリングレートやビット列が変わりません。" +
+                        "注意: OS の音量が効かず、DAC 側の音量で鳴ります。" +
+                        "ONにする前に、DAC に付けたヘッドホンやイヤホンの音量にご注意ください。" +
+                        "OFF の間は、DAC には触りません(OS 経由で再生します)。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Switch(checked = direct, onCheckedChange = { UsbVolume.setDirectOutput(it) })
+        }
+        // 直接出力が OFF の間は、以下の設定は意味がないので出さない。
+        if (!direct) return@Column
 
         val initial by UsbVolume.initial.collectAsState()
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
