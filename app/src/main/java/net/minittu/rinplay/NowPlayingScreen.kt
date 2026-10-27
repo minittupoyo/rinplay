@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import net.minittu.rinplay.lyrics.LyricsRepository
 import net.minittu.rinplay.usb.UsbVolume
 
 /**
@@ -60,6 +62,9 @@ fun NowPlayingScreen(
     state: PlaybackUiState,
     source: SourceFormat?,
     format: OutputFormat?,
+    lyrics: LyricsRepository,
+    showLyrics: Boolean,
+    onToggleLyrics: () -> Unit,
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -81,13 +86,25 @@ fun NowPlayingScreen(
         ) {
             NowPlayingTopBar(
                 format = format,
+                showLyrics = showLyrics,
                 onCollapse = onCollapse,
+                onToggleLyrics = onToggleLyrics,
                 onShowInfo = { showInfo = true },
             )
-            ArtworkPane(
-                artwork = artwork,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp),
-            )
+            // 歌詞を出している間は、ジャケットの場所を歌詞に譲る。
+            val paneModifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp)
+            if (showLyrics) {
+                LyricsPane(
+                    repository = lyrics,
+                    mediaId = mediaItem?.mediaId,
+                    metadata = state.metadata,
+                    durationMs = state.durationMs,
+                    positionMs = state.positionMs,
+                    modifier = paneModifier,
+                )
+            } else {
+                ArtworkPane(artwork = artwork, modifier = paneModifier)
+            }
             TrackInfo(state.metadata)
             SeekBar(state)
             TransportControls(state)
@@ -96,11 +113,13 @@ fun NowPlayingScreen(
     }
 }
 
-/** 上部バー。閉じるボタン、タイトル、出力の状態を示す再生情報ボタン。 */
+/** 上部バー。閉じるボタン、タイトル、歌詞の切り替え、出力の状態を示す再生情報ボタン。 */
 @Composable
 private fun NowPlayingTopBar(
     format: OutputFormat?,
+    showLyrics: Boolean,
     onCollapse: () -> Unit,
+    onToggleLyrics: () -> Unit,
     onShowInfo: () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -113,6 +132,13 @@ private fun NowPlayingTopBar(
             textAlign = TextAlign.Center,
             modifier = Modifier.weight(1f),
         )
+        IconButton(onClick = onToggleLyrics) {
+            Icon(
+                Icons.Rounded.Lyrics,
+                contentDescription = if (showLyrics) "ジャケットを表示" else "歌詞を表示",
+                tint = if (showLyrics) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         PlaybackInfoButton(format = format, onClick = onShowInfo)
     }
 }

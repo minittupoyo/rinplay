@@ -42,6 +42,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.minittu.rinplay.lyrics.LyricsRepository
 
 private const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
 
@@ -125,6 +126,9 @@ fun AppRoot() {
         if (value <= UiPrefs.TAB_DLNA) uiPrefs.lastTab = value // 設定は保存しない(起動時はライブラリ / DLNA)
     }
     var expanded by rememberSaveable { mutableStateOf(false) }
+    // 歌詞は、開いているかどうかを覚えておく(閉じて開き直しても歌詞のまま)。
+    var showLyrics by rememberSaveable { mutableStateOf(false) }
+    val lyrics = remember { LyricsRepository(context.applicationContext) }
     val currentMediaId = playback?.mediaItem?.mediaId
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -185,7 +189,15 @@ fun AppRoot() {
             ) {
                 // 開いている間は、戻るキーでまず閉じる。ここで登録するので、下の画面より優先される。
                 BackHandler { expanded = false }
-                NowPlayingScreen(playback, source, format, onCollapse = { expanded = false })
+                NowPlayingScreen(
+                    playback,
+                    source,
+                    format,
+                    lyrics = lyrics,
+                    showLyrics = showLyrics,
+                    onToggleLyrics = { showLyrics = !showLyrics },
+                    onCollapse = { expanded = false },
+                )
             }
         }
     }

@@ -157,7 +157,7 @@ class MusicRepository(private val context: Context) {
     private fun String?.validOrNull(): String? =
         if (isNullOrBlank() || this == MediaStore.UNKNOWN_STRING) null else this
 
-    private companion object {
+    companion object {
         const val UNKNOWN_ARTIST = "不明なアーティスト"
         const val UNKNOWN_ALBUM = "不明なアルバム"
     }
