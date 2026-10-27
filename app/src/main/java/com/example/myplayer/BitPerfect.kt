@@ -13,6 +13,9 @@ import android.util.Log
 object BitPerfect {
     private const val TAG = "BitPerfect"
 
+    /** [apply] が成功したときの状態の文字列(画面の再生情報は、これで OS のビットパーフェクトかを判定する)。 */
+    const val STATUS_ENABLED = "有効"
+
     private val attributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
@@ -48,7 +51,7 @@ object BitPerfect {
             val ok = am.setPreferredMixerAttributes(attributes, device, wanted)
             val now = am.getPreferredMixerAttributes(attributes, device)
             Log.i(TAG, "set(${wanted.describe()}) -> $ok, now=${now?.describe()}")
-            return if (ok) "有効" else "要求失敗"
+            return if (ok) STATUS_ENABLED else "要求失敗"
         }
         Log.i(TAG, "no bit-perfect profile: devices=${devices.joinToString { it.describe() }} rate=${sampleRateHz}Hz")
         return "非対応(この出力機器は未対応)"

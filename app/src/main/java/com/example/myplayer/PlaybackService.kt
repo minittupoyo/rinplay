@@ -101,7 +101,12 @@ class PlaybackService : MediaSessionService() {
                 audioTrackConfig: AudioSink.AudioTrackConfig,
             ) {
                 liveTracks++
-                OutputFormatState.set(audioTrackConfig.toOutputFormat().copy(bitPerfect = bitPerfectStatus))
+                OutputFormatState.set(
+                    audioTrackConfig.toOutputFormat().copy(
+                        bitPerfect = bitPerfectStatus,
+                        path = if (bitPerfectStatus == BitPerfect.STATUS_ENABLED) OutputPath.BIT_PERFECT else OutputPath.MIXER,
+                    ),
+                )
             }
 
             override fun onAudioTrackReleased(

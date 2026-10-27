@@ -10,6 +10,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import com.example.myplayer.OutputFormat
 import com.example.myplayer.OutputFormatState
+import com.example.myplayer.OutputPath
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToLong
@@ -71,7 +72,10 @@ class UsbDirectAudioSink(
         resetStreamState()
         out.setPaused(!playing)
         OutputFormatState.set(
-            OutputFormat(rate, out.alt.bitResolution, isFloat = false, channelCount = 2, bitPerfect = "USB直結(ビットパーフェクト)"),
+            OutputFormat(
+                rate, out.alt.bitResolution, isFloat = false, channelCount = 2,
+                bitPerfect = "USB直結(ビットパーフェクト)", path = OutputPath.USB_DIRECT,
+            ),
         )
         return true
     }

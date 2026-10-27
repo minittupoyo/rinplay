@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
@@ -26,7 +25,6 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -64,10 +62,13 @@ fun NowPlayingScreen(
 ) {
     val controller = state.controller
     val metadata = state.metadata
+    var showInfo by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
     var dragPosition by remember { mutableFloatStateOf(0f) }
     val duration = state.durationMs.coerceAtLeast(0L)
     val shownPosition = if (dragging) dragPosition.toLong() else state.positionMs
+
+    if (showInfo) PlaybackInfoDialog(source, format, onDismiss = { showInfo = false })
 
     Surface(modifier = modifier.fillMaxSize()) {
         Column(
@@ -87,7 +88,7 @@ fun NowPlayingScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.size(48.dp))
+                PlaybackInfoButton(format = format, onClick = { showInfo = true })
             }
 
             // 残りの高さに収まる最大の正方形でジャケットを出す(画面が低い端末でも操作ボタンが隠れない)。
@@ -130,29 +131,6 @@ fun NowPlayingScreen(
                 )
             }
 
-            // 高音質の確認用。主役は再生中のファイルの形式(FLAC 24bit 48kHz など)。
-            // その下に、実際に AudioTrack に渡している出力形式と、ビットパーフェクトの状態を小さく出す。
-            if (source != null) {
-                AssistChip(
-                    onClick = {},
-                    label = { Text(source.label()) },
-                    leadingIcon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                    modifier = Modifier.padding(top = 12.dp),
-                )
-            }
-            if (format != null) {
-                val detail = buildList {
-                    add("出力 ${format.sampleRateLabel} · ${format.bitDepthLabel}")
-                    if (format.bitPerfect.isNotEmpty()) add("ビットパーフェクト: ${format.bitPerfect}")
-                }.joinToString("\n")
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
 
             Slider(
                 value = shownPosition.coerceIn(0L, duration.coerceAtLeast(1L)).toFloat(),
@@ -167,7 +145,7 @@ fun NowPlayingScreen(
                 },
                 valueRange = 0f..duration.coerceAtLeast(1L).toFloat(),
                 enabled = duration > 0,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(top = 16.dp),
             )
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
                 Text(formatTime(shownPosition), style = MaterialTheme.typography.labelMedium)

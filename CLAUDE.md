@@ -39,7 +39,7 @@
 ## 実装上の注意
 
 ### 出力表示とビットパーフェクト
-- 画面の主な表示は、再生中のファイル自体の形式(`SourceFormat`。ミニプレイヤーの補足、全画面「再生中」のチップ。例: `FLAC 24bit 48kHz` / `MP3 320kbps 44.1kHz`)。全画面の小さい文字の「出力 48 kHz · 32-bit float」は、AudioTrack に渡した形式(`onAudioTrackInitialized`)で、両者は別物(FLAC 24bit の出力が 32-bit float になる等)。以前は出力側だけを出していたため、DLNA の MP3 320kbps が「16-bit」と見えていた
+- 画面の主な表示は、再生中のファイル自体の形式(`SourceFormat`。ミニプレイヤーの補足、全画面「再生中」の再生情報ダイアログ。例: `FLAC 24bit 48kHz` / `MP3 320kbps 44.1kHz`)。ダイアログの「出力形式」(48 kHz · 32-bit float など)は、AudioTrack に渡した形式(`onAudioTrackInitialized`)で、両者は別物(FLAC 24bit の出力が 32-bit float になる等)。以前は出力側だけを出していたため、DLNA の MP3 320kbps が「16-bit」と見えていた
 - 元ファイルの形式は `PlaybackService.onAudioInputFormatChanged` の `Format` から作る(`SourceFormat.kt`)。実機で確認した値: FLAC / WAV は `pcmEncoding` からビット深度(16/24)が取れる。AAC は公称ビットレート(`Format.bitrate`。256kbps を 256 と出す。実測平均は 251)、MP3 は平均(CBR 320kbps → 320366bps → 320、VBR は実際の平均。MediaStore の `bitrate` 列は VBR で外れる(224000 と出たが実際は 49kbps)ので使わない)。ロスレスはビットレートを出さず、ロッシーはビット深度を出さない
 - ExoPlayer は次の曲を先読みして `onAudioInputFormatChanged` を通知するので、元ファイルの形式は 1 変数ではなく曲ごと(`SourceFormatState`、キーは mediaId、最大 8 件)に持ち、再生中の曲の mediaId で引く。同じ出力形式の曲が続くと AudioTrack が使い回されて `onAudioTrackInitialized` が来ないので、出力側(`OutputFormatState`)は曲ごとの情報の根拠にならない端末の実出力ではない。実出力は `dumpsys media.audio_flinger` で、アプリ(uid)のトラックが乗るスレッドを見る
 - `setEnableAudioFloatOutput(true)` を維持する。false にすると 24bit FLAC が 16bit 出力になる
@@ -106,7 +106,7 @@
 - 再生状態は `PlaybackUiState`(`rememberPlaybackUiState`)で 1 か所の `Player.Listener` から受け、ミニプレイヤーと全画面で共有する(再生中・曲・位置・シャッフル・リピート)。位置は再生中だけ 500ms ごとに更新
 - `LocalLibraryScreen`: 上部バー(タイトル + 検索アイコン。検索は `SearchTopBar` で、バーの中に入力欄が開く)+ タブ(曲 / アルバム / アーティスト)。アルバムは大きなジャケットのグリッド(`LazyVerticalGrid`)。再生中の曲は、タイトルをテーマ色にして右端にアイコンを出す
 - `DlnaScreen`: 上部バー(戻る・検索・サーバー再検索)+ タブ(ホーム / 曲 / アルバム / アーティスト)。フォルダの中身がすべてアルバムのときはグリッド、それ以外はリスト。戻るキーは「フォルダの奥 → 検索を閉じる → サーバー一覧」の順
-- 全画面「再生中」: 大きなジャケット(残りの高さに収まる正方形)、曲名、アーティスト — アルバム、出力フォーマットのチップとビットパーフェクトの状態、シーク、シャッフル/前/再生/次/リピート(なし → 全曲 → 1 曲)
+- 全画面「再生中」: 大きなジャケット(残りの高さに収まる正方形)、曲名、アーティスト — アルバム、右上の再生情報アイコン(`PlaybackInfoButton`。出力経路 `OutputPath` で状態が変わる: USB 直結 = USB アイコン + 背景色 / OS のビットパーフェクト = 高品質アイコン + 背景色 / 標準出力 = 波形アイコン(背景なし)/ 出力情報なし = 薄い波形。タップで `PlaybackInfoDialog` に、状態・再生中のファイルの形式・出力形式・ビットパーフェクトの可否を出す。以前の形式のチップと小さい文字は廃止)、シーク、シャッフル/前/再生/次/リピート(なし → 全曲 → 1 曲)
 - アイコンは `material-icons-extended`(絵文字や文字記号は使わない)。アプリアイコンはアダプティブ(`mipmap-anydpi-v26/ic_launcher.xml`。背景は単色、前景は音符のベクター、モノクロ版つき)
 - Compose の落とし穴(実機で踏んだ): 一覧(`LazyColumn`)の各行のタップ処理は一度作られると使い回され、`controller`(再生サービスへの接続。起動直後は null)を値のまま握ると、タブを切り替えて一覧を作り直すまで再生が始まらない(起動 53 秒後でも `NONE` のまま)。タップ処理の中では `rememberUpdatedState(controller)` で常に最新の値を読む(`LocalLibraryScreen` / `DlnaScreen`)。再発したら「起動直後 4 秒でタップして再生が始まるか」で確認する
 - 実機での注意: ミニプレイヤーの有無で画面下の位置が変わる。タップ座標は直前のスクショで確認する。`adb shell cmd uimode night no|yes` でライト/ダークを切り替えて確認できる(確認後は元に戻す)

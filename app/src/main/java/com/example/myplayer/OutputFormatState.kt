@@ -4,13 +4,26 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
 
-/** AudioTrack に実際に渡されている出力フォーマット。サービスが書き、UI が読む。 */
+/** 音の出口。画面の再生情報アイコンの状態になる。 */
+enum class OutputPath {
+    /** USB DAC に OS のミキサーを通さず直接出力(UsbDirectAudioSink) */
+    USB_DIRECT,
+
+    /** OS のビットパーフェクト出力(setPreferredMixerAttributes が通ったとき) */
+    BIT_PERFECT,
+
+    /** OS のミキサー経由(リサンプルや音量処理が入りうる) */
+    MIXER,
+}
+
+/** AudioTrack(または USB 直結)に実際に渡されている出力フォーマット。サービスが書き、UI が読む。 */
 data class OutputFormat(
     val sampleRateHz: Int,
     val bitDepth: Int,
     val isFloat: Boolean,
     val channelCount: Int,
     val bitPerfect: String = "",
+    val path: OutputPath = OutputPath.MIXER,
 )
 
 object OutputFormatState {
