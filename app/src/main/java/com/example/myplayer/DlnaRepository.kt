@@ -34,6 +34,7 @@ import org.jupnp.support.model.BrowseFlag
 import org.jupnp.support.model.BrowseResult
 import org.jupnp.support.model.DIDLContent
 import org.jupnp.support.model.DIDLObject
+import org.jupnp.support.model.container.MusicAlbum
 import org.jupnp.support.model.item.MusicTrack
 import kotlin.coroutines.resume
 
@@ -45,10 +46,28 @@ data class DlnaEntry(
     /** フォルダなら true。false のとき [mediaItem] が再生対象。 */
     val isContainer: Boolean,
     val mediaItem: MediaItem? = null,
-    /** 一覧に出す補足(曲ならアーティスト)。 */
-    val subtitle: String? = null,
     /** ジャケット画像の URL(DIDL の upnp:albumArtURI)。サーバーが返さなければ null。 */
     val artworkUri: String? = null,
+    val kind: DlnaKind = if (isContainer) DlnaKind.FOLDER else DlnaKind.TRACK,
+    /** フォルダの子の数(DIDL の childCount)。アルバムなら曲数。サーバーが返さなければ null */
+    val childCount: Int? = null,
+    /** アルバムのアーティスト、または曲のアーティスト */
+    val artistName: String? = null,
+    val albumTitle: String? = null,
+)
+
+/** 一覧の行の種類。UPnP クラス(object.container.album.musicAlbum など)で判定する。 */
+enum class DlnaKind { FOLDER, ALBUM, ARTIST, TRACK }
+
+/**
+ * サーバーの「音楽ライブラリ」の入口。ルート直下の Music と、その中の曲/アルバム/アーティストの場所。
+ * 名前で探すので、見つからない項目は null(その場合は画面に出さない)。
+ */
+data class DlnaMusicHome(
+    val rootId: String,
+    val songs: Crumb?,
+    val albums: Crumb?,
+    val artists: Crumb?,
 )
 
 /** 1 回の Browse で取得する件数。 */
@@ -232,7 +251,22 @@ class DlnaRepository(private val context: Context) {
 
     private fun DIDLContent.toEntries(): List<DlnaEntry> {
         val folders = containers.map {
-            DlnaEntry(it.id, it.title.orEmpty(), isContainer = true, artworkUri = it.artworkUrl())
+            val clazz = it.clazz?.value.orEmpty()
+            val kind = when {
+                clazz.startsWith(CLASS_MUSIC_ALBUM) -> DlnaKind.ALBUM
+                clazz.startsWith(CLASS_MUSIC_ARTIST) -> DlnaKind.ARTIST
+                else -> DlnaKind.FOLDER
+            }
+            DlnaEntry(
+                id = it.id,
+                title = it.title.orEmpty(),
+                isContainer = true,
+                artworkUri = it.artworkUrl(),
+                kind = kind,
+                childCount = it.childCount,
+                // アルバムのアーティストは upnp:artist、なければ dc:creator
+                artistName = (it as? MusicAlbum)?.firstArtist?.name ?: it.creator,
+            )
         }
         val tracks = items.mapNotNull { item ->
             val res = item.resources.firstOrNull { it.protocolInfo?.contentFormat?.startsWith("audio/") == true }
@@ -259,18 +293,49 @@ class DlnaRepository(private val context: Context) {
                 title = item.title.orEmpty(),
                 isContainer = false,
                 mediaItem = mediaItem,
-                subtitle = artist,
                 artworkUri = artwork,
+                artistName = artist,
+                albumTitle = track?.album,
             )
         }
         return folders + tracks
     }
 
+    /**
+     * サーバーの音楽ライブラリの入口を探す。ルート直下の「Music」と、その中の曲/アルバム/アーティスト。
+     * サーバーごとに名前が違うので、よくある名前(英語・日本語)で探す。見つからなければ null で、
+     * その場合の画面は従来どおりルートからのフォルダ閲覧になる。結果は覚えておく。
+     */
+    suspend fun findMusicHome(server: DlnaServer): DlnaMusicHome? {
+        if (homeCache.containsKey(server.udn)) return homeCache[server.udn]
+        val root = browse(server, "0").getOrNull()?.entries.orEmpty()
+        val music = root.firstOrNull { it.isContainer && it.title.norm() in MUSIC_TITLES }
+        val home = music?.let { m ->
+            val children = browse(server, m.id).getOrNull()?.entries.orEmpty().filter { it.isContainer }
+            fun find(names: Set<String>) =
+                children.firstOrNull { it.title.norm() in names }?.let { Crumb(it.id, it.title) }
+            DlnaMusicHome(m.id, find(SONG_TITLES), find(ALBUM_TITLES), find(ARTIST_TITLES))
+        }
+        homeCache[server.udn] = home
+        Log.i(TAG, "musicHome ${server.name}: $home")
+        return home
+    }
+
+    private fun String.norm() = trim().lowercase()
+
     /** DIDL の upnp:albumArtURI。無ければ null。 */
     private fun DIDLObject.artworkUrl(): String? =
         getFirstPropertyValue(DIDLObject.Property.UPNP.ALBUM_ART_URI::class.java)?.toString()
 
+    private val homeCache = mutableMapOf<String, DlnaMusicHome?>()
+
     private companion object {
         const val TAG = "Dlna"
+        const val CLASS_MUSIC_ALBUM = "object.container.album.musicAlbum"
+        const val CLASS_MUSIC_ARTIST = "object.container.person.musicArtist"
+        val MUSIC_TITLES = setOf("music", "ミュージック", "音楽", "音楽ライブラリ")
+        val ALBUM_TITLES = setOf("album", "albums", "アルバム")
+        val ARTIST_TITLES = setOf("artist", "artists", "アーティスト")
+        val SONG_TITLES = setOf("all music", "all songs", "songs", "tracks", "all tracks", "曲", "すべての曲")
     }
 }

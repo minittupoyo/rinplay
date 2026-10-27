@@ -67,6 +67,11 @@
 - アーティストは「アルバムアーティスト(API 30+)、なければ曲のアーティスト」でまとめる。値が `<unknown>` や空なら `不明なアーティスト` / `不明なアルバム`。アルバム内はトラック番号順
 - ローカルのジャケットは `content://media/external/audio/albumart/<ALBUM_ID>`(Android 17 でも Coil で読めることを実機で確認)。同じ URI を `MediaMetadata.artworkUri` に入れ、再生バーと通知で使う
 - DLNA のジャケットは DIDL の `upnp:albumArtURI`(`DlnaEntry.artworkUri`)。`Music Server` は返す。サーバーによっては返さないので、無ければプレースホルダー
+- DLNA の音楽ライブラリ: サーバーを選ぶと `DlnaRepository.findMusicHome()` が、ルート直下の `Music` と、その中の曲(`All Music`)・アルバム(`Album`)・アーティスト(`Artist`)を**名前で**探す(英語・日本語の候補。サーバーごとに名前が違うため)。見つかれば `Music` を起点にして「ホーム / 曲 / アルバム / アーティスト」のタブを出す。見つからなければ従来どおりルートからのフォルダ閲覧。結果はセッション中キャッシュする
+- DLNA の行の種類は UPnP クラスで判定する(`object.container.album.musicAlbum` → アルバム、`object.container.person.musicArtist` → アーティスト、それ以外のコンテナ → フォルダ)。アルバム行は `アーティスト · N曲`(`upnp:artist`/`dc:creator` と `childCount`)、曲は `アーティスト — アルバム`(曲がすべて同じアルバムのときはアーティストのみ)
+- アーティスト行に件数は出さない。`Music Server` のアーティスト直下は `- All Albums -`(全曲まとめ)という疑似フォルダを含み、`childCount` がアルバム数と合わないため
+- パスは `Music` を起点とした相対(ホームのパスは空)。保存済みの古い絶対パス(`Music` から始まるもの)も、ID が絶対なのでそのまま使える
+- `Music Server` の構成(実測): ルート 0 → `Browse Folders` / `Music`(1)/ `Pictures` / `Video`。`Music` → `Album`(1$7)/ `All Music`(1$4)/ `Artist`(1$6)/ `Folders` / `Genre` / `Playlists` / `Recently Added`。メタデータのない曲は、タイトルだけで補足が空になる
 - 画像の読み込みは Coil 3(`coil-compose` + `coil-network-okhttp`。http(s) には後者が必要。平文 http は `usesCleartextTraffic=true` で許可)
 - 一覧の行は `LibraryRow`、画像は `Artwork`(`LibraryRow.kt`)でローカルと DLNA を共通化。再生バーは埋め込みジャケット(`artworkData`)を優先し、なければ `artworkUri`
 
@@ -74,6 +79,7 @@
 - 依存バージョンは libs.versions.toml で一元管理
 
 ## 未確認・未実装
+- DLNA ライブラリ: タブの場所を名前で探す方式は `Music Server` でしか確認していない(他のサーバーで `Music` 等が見つからない場合はフォルダ閲覧にフォールバックする想定だが未確認)。トラック番号の表示・ジャンル/プレイリストの専用表示は未実装
 - ライブラリ: 検索、並べ替え、フォルダ別表示は未実装。ローカルは起動時に全曲を一括で読む(数千曲規模での速度は未確認)。通知のジャケットは単色画像での確認のみ(実画像では未確認)
 - 音が実際に出ているかの聴感確認、ロック画面からの操作、通知のシークバー操作
 - DLNA: 実際に 500 件を超えるフォルダ(ページ送りはページサイズ 20 で 50 件を 3 ページに分けて確認済み)、ローカル/DLNA タブの記憶。保存したフォルダが消えている場合・保存済みサーバーが見つからない場合の挙動

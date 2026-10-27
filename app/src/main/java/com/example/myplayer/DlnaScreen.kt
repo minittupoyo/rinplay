@@ -51,6 +51,20 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // サーバーの音楽ライブラリの入口(Music と、曲/アルバム/アーティストの場所)。
+    // 探し終わるまで(homeResolved が false の間)は一覧を読まない。ルートを読んでから読み直すのを避けるため。
+    var home by remember { mutableStateOf<DlnaMusicHome?>(null) }
+    var homeResolved by remember { mutableStateOf(false) }
+    LaunchedEffect(server?.udn) {
+        val s = server
+        home = null
+        homeResolved = false
+        if (s != null) {
+            home = repository.findMusicHome(s)
+            homeResolved = true
+        }
+    }
+
     // 前回開いていた場所は、サーバーが検出されたら 1 度だけ復元する。
     // 手動で選んだあとは復元しない。保存も復元の判断が済んでから行う(null で上書きしないため)。
     var restoreDone by remember { mutableStateOf(false) }
@@ -81,12 +95,14 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
         }
     }
 
-    val currentId = path.lastOrNull()?.id
+    // パスが空のときの起点。音楽ライブラリが見つかれば Music、なければサーバーのルート。
+    val currentId = path.lastOrNull()?.id ?: home?.rootId
     val listState = rememberLazyListState()
 
     // フォルダを開いたら、状態を初期化して 1 ページ目を読む。
-    LaunchedEffect(server?.udn, currentId) {
+    LaunchedEffect(server?.udn, currentId, homeResolved) {
         val s = server ?: return@LaunchedEffect
+        if (!homeResolved) return@LaunchedEffect
         loading = true
         loadingMore = false
         error = null
@@ -107,8 +123,9 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
     }
 
     // 末尾に近づいたら次のページを読む。
-    LaunchedEffect(server?.udn, currentId) {
+    LaunchedEffect(server?.udn, currentId, homeResolved) {
         val s = server ?: return@LaunchedEffect
+        if (!homeResolved) return@LaunchedEffect
         snapshotFlow {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
             // 読み込むたびに entries.size が変わるので、まだ末尾付近なら続けて発火する。
@@ -151,6 +168,24 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
             TextButton(onClick = { repository.search() }) { Text("再検索") }
         }
 
+        // 音楽ライブラリの入口が見つかったサーバーでは、ローカルと同じ「曲 / アルバム / アーティスト」を出す。
+        val library = home
+        if (server != null && library != null) {
+            val tab = when (path.firstOrNull()?.id) {
+                null -> 0
+                library.songs?.id -> 1
+                library.albums?.id -> 2
+                library.artists?.id -> 3
+                else -> 0
+            }
+            Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                DlnaTab("ホーム", tab == 0) { path.clear() }
+                library.songs?.let { c -> DlnaTab("曲", tab == 1) { path.clear(); path.add(c) } }
+                library.albums?.let { c -> DlnaTab("アルバム", tab == 2) { path.clear(); path.add(c) } }
+                library.artists?.let { c -> DlnaTab("アーティスト", tab == 3) { path.clear(); path.add(c) } }
+            }
+        }
+
         if (server != null && hasMore && totalCount > 0) {
             Text(
                 "$loadedCount / $totalCount 件を読み込み済み",
@@ -177,13 +212,23 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
                 }
             }
         } else {
+            // 曲がすべて同じアルバムなら、補足にアルバム名は出さない(アルバムを開いた画面)。
+            val singleAlbum = remember(entries) {
+                entries.filter { !it.isContainer }.mapNotNull { it.albumTitle?.takeIf(String::isNotEmpty) }
+                    .distinct().size <= 1
+            }
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(entries, key = { it.id }) { entry ->
                     LibraryRow(
                         title = entry.title,
-                        subtitle = entry.subtitle,
+                        subtitle = entrySubtitle(entry, singleAlbum),
                         artwork = entry.artworkUri,
-                        placeholder = if (entry.isContainer) "📁" else "♪",
+                        placeholder = when (entry.kind) {
+                            DlnaKind.ALBUM -> "💿"
+                            DlnaKind.ARTIST -> "👤"
+                            DlnaKind.FOLDER -> "📁"
+                            DlnaKind.TRACK -> "♪"
+                        },
                         onClick = {
                             val ctrl = controller
                             if (entry.isContainer) {
@@ -210,4 +255,20 @@ fun DlnaScreen(repository: DlnaRepository, controller: MediaController?, modifie
             }
         }
     }
+}
+
+@Composable
+private fun DlnaTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    TextButton(onClick = onClick) { Text(if (selected) "● $label" else label) }
+}
+
+/** 一覧の行の補足。アルバムは「アーティスト · N曲」、フォルダは件数、曲はアーティスト(と、必要ならアルバム)。 */
+private fun entrySubtitle(entry: DlnaEntry, singleAlbum: Boolean): String? = when {
+    entry.kind == DlnaKind.ALBUM ->
+        listOfNotNull(entry.artistName, entry.childCount?.let { "${it}曲" }).joinToString(" · ").ifEmpty { null }
+    // アーティスト直下は「- All Albums -」のような疑似フォルダを含み、件数が実態と合わないので出さない。
+    entry.kind == DlnaKind.ARTIST -> null
+    entry.isContainer -> entry.childCount?.let { "${it}件" }
+    singleAlbum || entry.albumTitle.isNullOrEmpty() -> entry.artistName
+    else -> listOfNotNull(entry.artistName, entry.albumTitle).joinToString(" — ")
 }
