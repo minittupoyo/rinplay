@@ -117,9 +117,13 @@ object UsbDac {
         }
     }
 
-    /** DAC があって権限がなければ、要求ダイアログを出す。 */
-    fun prepare(context: Context) {
+    /** DAC があれば、権限を確認する。権限があれば(または許可されたあとで)[onReady] を呼ぶ。 */
+    fun prepare(context: Context, onReady: () -> Unit = {}) {
         val device = findAudioDevice(context) ?: return
-        if (!ensurePermission(context, device) {}) Log.i(TAG, "requesting USB permission for ${device.productName}")
+        if (ensurePermission(context, device, onReady)) {
+            onReady()
+        } else {
+            Log.i(TAG, "requesting USB permission for ${device.productName}")
+        }
     }
 }

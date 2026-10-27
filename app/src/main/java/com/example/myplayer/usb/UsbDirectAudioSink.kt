@@ -27,7 +27,11 @@ class UsbDirectAudioSink(
 
     private var usb: UsbOutput? = null
     private var useUsb = false
-    private var usbFailed = false
+    @Volatile private var usbFailed = false
+    @Volatile private var retryUsb = false
+    @Volatile private var usbLost = false
+    private var lastLossMs = 0L
+    private var lastConfig: AudioSink.AudioSinkConfig? = null
 
     private var format: Format? = null
     private var rate = 0
@@ -46,27 +50,50 @@ class UsbDirectAudioSink(
     private var stalledSinceMs = 0L
 
     override fun configure(config: AudioSink.AudioSinkConfig) {
-        val f = config.format
-        val bits = inputBits(f)
-        if (!usbFailed && bits != null) {
-            val out = reuseOrOpen(f.sampleRate, bits)
-            if (out != null) {
-                if (!useUsb) delegate.reset()
-                useUsb = true
-                format = f
-                rate = f.sampleRate
-                encoding = f.pcmEncoding
-                resetStreamState()
-                out.setPaused(!playing)
-                OutputFormatState.set(
-                    OutputFormat(rate, out.alt.bitResolution, isFloat = false, channelCount = 2, bitPerfect = "USB直結(ビットパーフェクト)"),
-                )
-                return
-            }
-        }
+        lastConfig = config
+        if (tryUseUsb(config)) return
         if (useUsb) closeUsb()
         useUsb = false
         super.configure(config)
+    }
+
+    /** USB 直結で出せるなら、そちらに切り替えて true を返す。できなければ何も変えずに false。 */
+    private fun tryUseUsb(config: AudioSink.AudioSinkConfig): Boolean {
+        val f = config.format
+        val bits = inputBits(f) ?: return false
+        if (usbFailed) return false
+        val out = reuseOrOpen(f.sampleRate, bits) ?: return false
+        if (!useUsb) delegate.reset()
+        useUsb = true
+        usbLost = false
+        format = f
+        rate = f.sampleRate
+        encoding = f.pcmEncoding
+        resetStreamState()
+        out.setPaused(!playing)
+        OutputFormatState.set(
+            OutputFormat(rate, out.alt.bitResolution, isFloat = false, channelCount = 2, bitPerfect = "USB直結(ビットパーフェクト)"),
+        )
+        return true
+    }
+
+    /**
+     * USB DAC が挿された(権限あり)。直結を試せるようにする。
+     * OS 経由で再生中なら、次の handleBuffer で直結に切り替える(OS 側に溜まっていた分は捨てるので、少し飛ぶ)。
+     * どのスレッドから呼んでもよい。
+     */
+    fun onUsbAttached() {
+        usbFailed = false
+        retryUsb = true
+    }
+
+    /** USB DAC が抜かれた。直結中なら、次の handleBuffer で OS 経由に戻す。どのスレッドから呼んでもよい。 */
+    fun onUsbDetached() {
+        if (!useUsb) return
+        usbLost = true
+        // 画面の表示(出力形式・音量スライダー)は、すぐ消す。後始末(close)は再生スレッドで行う。
+        UsbVolume.attach(null, null, 0)
+        OutputFormatState.set(null)
     }
 
     /** 入力 PCM のうち、実際に意味のあるビット数。USB に送れない形式は null。 */
@@ -106,12 +133,20 @@ class UsbDirectAudioSink(
     }
 
     override fun handleBuffer(buffer: ByteBuffer, presentationTimeUs: Long, encodedAccessUnitCount: Int): Boolean {
+        // OS 経由で再生中に DAC が挿されていたら、直結に切り替える。
+        if (!useUsb && retryUsb) {
+            retryUsb = false
+            lastConfig?.let { if (tryUseUsb(it)) Log.i(TAG, "switched to USB direct") }
+        }
         if (!useUsb) return super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
         val out = usb
-        if (out == null || !out.alive) {
-            // DAC が外れた等。以後は OS の出力に戻す。
+        if (usbLost || out == null || !out.alive) {
+            // DAC が外れた等。OS の出力に戻す(ExoPlayer が再設定して、configure が呼ばれる)。
+            // 短い間に続けて失われるなら、挿し直されるまで直結は試さない(開いては落ちる繰り返しを避ける)。
             Log.w(TAG, "USB output lost; falling back")
-            usbFailed = true
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastLossMs < 5000) usbFailed = true
+            lastLossMs = now
             closeUsb()
             useUsb = false
             throw AudioSink.WriteException(-1, format!!, /* isRecoverable = */ true)
@@ -198,22 +233,15 @@ class UsbDirectAudioSink(
         }
     }
 
+    // OS 経由のときも再生中かを覚えておく(途中で直結に切り替えたとき、止まった状態で始めないため)。
     override fun play() {
-        if (useUsb) {
-            playing = true
-            usb?.setPaused(false)
-        } else {
-            super.play()
-        }
+        playing = true
+        if (useUsb) usb?.setPaused(false) else super.play()
     }
 
     override fun pause() {
-        if (useUsb) {
-            playing = false
-            usb?.setPaused(true)
-        } else {
-            super.pause()
-        }
+        playing = false
+        if (useUsb) usb?.setPaused(true) else super.pause()
     }
 
     override fun handleDiscontinuity() {

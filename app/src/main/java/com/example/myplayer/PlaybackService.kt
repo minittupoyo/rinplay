@@ -1,6 +1,13 @@
 package com.example.myplayer
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import android.media.AudioFormat
+import android.os.Build
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -17,6 +24,22 @@ import androidx.media3.session.MediaSessionService
 class PlaybackService : MediaSessionService() {
 
     private var session: MediaSession? = null
+    private var usbSink: com.example.myplayer.usb.UsbDirectAudioSink? = null
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    Log.i("PlaybackService", "USB device attached")
+                    com.example.myplayer.usb.UsbDac.prepare(context) { usbSink?.onUsbAttached() }
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    Log.i("PlaybackService", "USB device detached")
+                    usbSink?.onUsbDetached()
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -29,8 +52,19 @@ class PlaybackService : MediaSessionService() {
                 enableFloatOutput: Boolean,
                 enableAudioTrackPlaybackParams: Boolean,
             ): AudioSink? = super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
-                ?.let { com.example.myplayer.usb.UsbDirectAudioSink(context, it) }
+                ?.let { com.example.myplayer.usb.UsbDirectAudioSink(context, it).also { sink -> usbSink = sink } }
         }.setEnableAudioFloatOutput(true)
+
+        // DAC の挿抜を監視する。挿されたら権限を確認して、直結を試せるようにする(再生中なら切り替える)。
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(usbReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(usbReceiver, filter)
+        }
         val player = ExoPlayer.Builder(this, renderers)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -84,6 +118,7 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
 
     override fun onDestroy() {
+        unregisterReceiver(usbReceiver)
         session?.run {
             player.release()
             release()
