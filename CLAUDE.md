@@ -31,6 +31,7 @@
 - 変更後は「ビルド → インストール → 起動 → logcat → スクショ」で動作確認する
 - 実機で確認していない場合は、その旨を明記する(音が実際に出ているかは、ログ・dumpsys では見えない)
 - 破壊的なadb操作(pm clear / uninstall / rm 等)は事前に確認する
+- コミットメッセージは Conventional Commits(`<type>(<scope>): <概要>`)。type は `feat` / `fix` / `refactor` / `perf` / `docs` / `chore` など、scope は `usb` / `dlna` / `ui` / `library` など(省略可)。概要は日本語で 1 行、本文に理由と確認結果を書く。例: `fix(dlna): フォルダの中でも検索の入力欄が開くようにする`。破壊的変更は `!` か `BREAKING CHANGE:` で示す
 - 高音質関連の変更では、実際の出力サンプリングレートを dumpsys で確認する
 - 画面タップ座標は、上部の出力表示の行数(1行/3行)でリスト位置がずれる。タップ前にスクショで確認する
 - Windows の Git Bash 注意: `adb shell` に `/sdcard/...` を渡すときは `MSYS_NO_PATHCONV=1`。`javap -cp` の区切りは `;`。`adb shell setprop X ""` は空文字がシェルに消されるので全体を `'...'` で囲む
