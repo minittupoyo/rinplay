@@ -60,6 +60,12 @@ Android 標準の `setPreferredMixerAttributes` によるビットパーフェ�
 - 曲の切り替えでサンプリングレートが変わるときは、DAC を開き直すため、約 0.35 秒の無音が入ります(ギャップレスではありません)。
 - 88.2 kHz 以上の再生、長時間の再生は、まだ確認していません。
 
+## ダウンロード
+
+[Releases](https://github.com/minittupoyo/rinplay/releases) から、署名つきの APK(`RinPlay-<バージョン>.apk`)をダウンロードしてインストールできます(Android 8.0 以上、arm64-v8a)。Releases の説明に、APK と署名証明書の SHA-256 を載せています。
+
+> デバッグビルド(`./gradlew installDebug`)で入れたアプリとは署名が違うため、上書きインストールできません。先にアンインストールしてください(設定は引き継がれません)。
+
 ## 動作要件
 
 - Android 8.0(API 26)以上、arm64-v8a

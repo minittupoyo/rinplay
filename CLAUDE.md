@@ -44,6 +44,16 @@
 - 実機での入力テスト: 端末の日本語キーボードは、`adb shell input text` で送った英字をかな変換する(`blue` が `bぅえ` になる)。英数字モード(左下の「あA」)にしてから入力する(欄ごとにかなに戻ることがある)。`KEYCODE_BACK` は、戻る先がないとアプリを閉じるので、そのあとのタップがランチャーに当たる
 - Windows の Git Bash 注意: `adb shell` に `/sdcard/...` を渡すときは `MSYS_NO_PATHCONV=1`。`javap -cp` の区切りは `;`。`adb shell setprop X ""` は空文字がシェルに消されるので全体を `'...'` で囲む
 
+## リリース
+
+- `v*` のタグ(例: `v0.1.1`)を push すると、`.github/workflows/release.yml` が署名つき APK をビルドして、GitHub Release に添付する(`RinPlay-<バージョン>.apk` と `.sha256`。説明に APK と署名証明書の SHA-256)。手動実行(`gh workflow run release.yml`)は、ビルドして artifact に置くだけで、Release は作らない。所要時間は 2〜5 分
+- バージョン名はタグから(`v0.1.0` → `0.1.0`)、`versionCode` は Actions の実行番号(`-PappVersionName` / `-PappVersionCode`)。ローカルのビルドは `0.1` / `1`
+- 署名の鍵は、リポジトリに入れない。GitHub Secrets(`RINPLAY_KEYSTORE_BASE64` / `RINPLAY_KEYSTORE_PASSWORD` / `RINPLAY_KEY_ALIAS` / `RINPLAY_KEY_PASSWORD`)に登録してある。ローカルのバックアップは `~/.rinplay-signing/`(`rinplay-release.jks` とパスワードの `README.txt`)。**失うと、同じアプリとして更新を配布できなくなる**ので、別の場所にもバックアップする。署名証明書の SHA-256: `71:B1:19:73:BB:7E:DF:27:AC:B3:45:B3:2D:9C:55:EC:AB:BB:8C:B7:FD:38:AE:21:0E:0A:9B:F2:21:FF:2D:4C`
+- ローカルで署名つきのリリースビルドを試す: 環境変数 `RINPLAY_KEYSTORE`(鍵のパス)/ `RINPLAY_KEYSTORE_PASSWORD` / `RINPLAY_KEY_ALIAS` / `RINPLAY_KEY_PASSWORD` を設定して `./gradlew assembleRelease`(環境変数がなければ、署名なし)。署名の確認は `apksigner verify --print-certs`
+- 署名がデバッグビルドと違うので、リリース APK はデバッグビルドの上に上書きインストールできない(先にアンインストール。設定は引き継がれない)
+- `android-actions/setup-android@v3` は、`packages: ""` にしないと、既定の `tools` が見つからず失敗する(ランナーの cmdline-tools にない)。Actions の `uses:` はバージョンタグ指定(コミット SHA での固定はしていない)
+- リモートのタグを付け直す(削除)のは、破壊的な操作なので、事前に確認する
+
 ## 実装メモ
 
 ### 出力表示とビットパーフェクト(OS 側)
