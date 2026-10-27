@@ -34,12 +34,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                Text("USB DAC に直接出力する(ビットパーフェクト)", style = MaterialTheme.typography.titleMedium)
+                Text("USB DAC に直接出力", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "OS のミキサーを通さず、USB DAC に直接出力します。サンプリングレートやビット列が変わりません。" +
-                        "注意: OS の音量が効かず、DAC 側の音量で鳴ります。" +
-                        "ONにする前に、DAC に付けたヘッドホンやイヤホンの音量にご注意ください。" +
-                        "OFF の間は、DAC には触りません(OS 経由で再生します)。",
+                    "OS のミキサーを通さず、ビットパーフェクトで出力します。OS の音量は効かず、DAC 側の音量で鳴ります。ON にする前にご注意ください。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -52,10 +49,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
 
         val initial by UsbVolume.initial.collectAsState()
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp)) {
-            Text("USB DAC の初期音量", style = MaterialTheme.typography.titleMedium)
+            Text("初期音量", style = MaterialTheme.typography.titleMedium)
             Text(
-                "USB DAC に直接出力するとき、再生を始める音量です(DAC の音量。0 dB が最大)。" +
-                    "「音量を保持する」が OFF のときは、再生中のスライダーで変えた音量も、アプリを終了すると初期音量に戻ります。",
+                "直接出力を始めるときの DAC の音量(0 dB が最大)。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp),
@@ -83,10 +79,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                Text("音量を保持する", style = MaterialTheme.typography.titleMedium)
+                Text("音量を保持", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "ON: 再生中に変えた音量を保存し、次回もその音量で始めます(保存がなければ初期音量)。" +
-                        "OFF: 毎回、初期音量で始めます。",
+                    "ON: 前回の音量 / OFF: 毎回、初期音量",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -101,12 +96,9 @@ fun SettingsScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                Text("音量調整のない DAC でも USB 直結を使う", style = MaterialTheme.typography.titleMedium)
+                Text("音量調整のない DAC でも使う", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "本体のダイヤルなどで音量を調整する DAC / アンプ向けです(OS の音量とは別)。" +
-                        "アプリから音量を操作できないので、音量スライダーは出ません。" +
-                        "ONにする前に、DAC 側の音量とゲインを低くしてください。" +
-                        "切り替えは、次に再生を始めるときから有効です。",
+                    "本体のダイヤルで調整する DAC 向け。ON の前に DAC の音量を下げてください。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

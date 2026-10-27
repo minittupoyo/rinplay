@@ -97,14 +97,13 @@ fun PlaybackInfoDialog(source: SourceFormat?, format: OutputFormat?, onDismiss: 
                 Text(
                     text = when (format?.path) {
                         OutputPath.USB_DIRECT ->
-                            "USB DAC に直接出力しています。OS のミキサーを通さないので、サンプリングレートやビット列は変わりません。" +
-                                "音量は DAC 側で調整します。"
+                            "OS のミキサーを通さず、USB DAC に直接出力しています。音量は DAC 側で調整します。"
                         OutputPath.BIT_PERFECT ->
                             "OS のビットパーフェクト出力です。"
                         OutputPath.MIXER ->
-                            "OS のミキサーを通しています。サンプリングレートの変換や音量の処理が入ることがあります。"
+                            "OS のミキサー経由です。レートの変換などが入ることがあります。"
                         null ->
-                            "出力の情報がありません。再生を始めると表示されます。"
+                            "再生を始めると表示されます。"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
