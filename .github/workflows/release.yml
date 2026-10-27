@@ -27,8 +27,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # SDK のライセンスに同意する。不足するコンポーネント(プラットフォーム、NDK、CMake)は Gradle が取得する。
+      # SDK のライセンスに同意する(パッケージは入れない。既定の tools は、ランナーの cmdline-tools にない)。
+      # 不足するコンポーネント(プラットフォーム、NDK、CMake)は Gradle が取得する。
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - uses: gradle/actions/setup-gradle@v4
 
