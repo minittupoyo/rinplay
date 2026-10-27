@@ -109,7 +109,13 @@ private fun PlayerScreen() {
         dlna.start()
         onDispose { dlna.stop() }
     }
-    var tab by remember { mutableIntStateOf(0) }
+    // 最後に開いていたタブ(ローカル / DLNA)を、次回の起動でも開く。
+    val uiPrefs = remember { UiPrefs(context.applicationContext) }
+    var tab by remember { mutableIntStateOf(uiPrefs.lastTab) }
+    fun selectTab(value: Int) {
+        tab = value
+        uiPrefs.lastTab = value
+    }
 
     var library by remember { mutableStateOf(LocalLibrary.EMPTY) }
     LaunchedEffect(granted) {
@@ -128,10 +134,14 @@ private fun PlayerScreen() {
             modifier = Modifier.fillMaxWidth().padding(16.dp),
         )
         Row(modifier = Modifier.padding(horizontal = 8.dp)) {
-            TextButton(onClick = { tab = 0 }) { Text(if (tab == 0) "● ローカル" else "ローカル") }
-            TextButton(onClick = { tab = 1 }) { Text(if (tab == 1) "● DLNA" else "DLNA") }
+            TextButton(onClick = { selectTab(UiPrefs.TAB_LOCAL) }) {
+                Text(if (tab == UiPrefs.TAB_LOCAL) "● ローカル" else "ローカル")
+            }
+            TextButton(onClick = { selectTab(UiPrefs.TAB_DLNA) }) {
+                Text(if (tab == UiPrefs.TAB_DLNA) "● DLNA" else "DLNA")
+            }
         }
-        if (tab == 1) {
+        if (tab == UiPrefs.TAB_DLNA) {
             DlnaScreen(dlna, controller, modifier = Modifier.weight(1f))
         } else if (!granted) {
             Text("音楽ファイルへのアクセス権限が必要です", modifier = Modifier.padding(16.dp))
