@@ -97,10 +97,13 @@ fun DlnaScreen(
     var query by remember { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<DlnaSearchResults?>(null) }
     var searching by remember { mutableStateOf(false) }
+    // フォルダの中で検索を開いたときの、元の場所。検索を閉じたらここに戻る(検索中は path を空にして結果を出すため)。
+    var pathBeforeSearch by remember { mutableStateOf<List<Crumb>?>(null) }
     var searchError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(server?.udn) {
         query = ""
         searchActive = false
+        pathBeforeSearch = null
     }
     LaunchedEffect(server?.udn, query) {
         val s = server
@@ -227,6 +230,21 @@ fun DlnaScreen(
     fun closeSearch() {
         searchActive = false
         query = ""
+        // フォルダの中で検索を開いていたなら、その場所に戻す。
+        pathBeforeSearch?.let {
+            path.clear()
+            path.addAll(it)
+        }
+        pathBeforeSearch = null
+    }
+
+    fun openSearch() {
+        // 入力欄は、フォルダの外(path が空)のときだけ出す作りなので、いまの場所を覚えてからフォルダを出る。
+        if (path.isNotEmpty()) {
+            pathBeforeSearch = path.toList()
+            path.clear()
+        }
+        searchActive = true
     }
 
     /** 戻る。フォルダの奥 → 検索を閉じる → サーバー一覧、の順。 */
@@ -295,7 +313,7 @@ fun DlnaScreen(
                 },
                 actions = {
                     if (currentServer != null) {
-                        IconButton(onClick = { searchActive = true }) {
+                        IconButton(onClick = ::openSearch) {
                             Icon(Icons.Rounded.Search, contentDescription = "検索")
                         }
                     }

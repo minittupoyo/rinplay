@@ -114,6 +114,7 @@
 - ローカル: `LocalLibrary.search()`。曲名・アーティスト・アルバム名で絞り込み、空白区切りの語はすべて含む(AND)。NFKC で正規化し小文字にするので、全角/半角・大文字/小文字は区別しない。結果は「アーティスト / アルバム / 曲」の見出しつき。曲をタップすると、結果の曲がキューになる
 - DLNA: サーバーの ContentDirectory `Search` を使う(`DlnaRepository.searchLibrary`)。`GetSearchCapabilities` が返すプロパティだけを使い、プロパティごとに単純な検索を並列に投げて id で重複を除いて統合する(曲: `dc:title` / `upnp:artist` / `upnp:album`、アルバム: `dc:title` / `upnp:artist`、アーティスト: `dc:title`。クラスは `derivedfrom` で絞る)。`or` や括弧は `Music Server` では通るが、他のサーバーで通る保証がないので使わない
 - 検索式の文字列は `"` と `\` をバックスラッシュでエスケープする。曲は 200 件、アルバム/アーティストは 100 件まで(曲が上限を超えたら見出しに `+` を付ける)。入力が止まって 400ms で検索する
+- フォルダの中で検索ボタンを押したときは、いまの場所を `pathBeforeSearch` に覚えて `path` を空にしてから検索バーを開き、検索を閉じたら元の場所に戻す(入力欄と結果は `path` が空のときだけ出す作りのため。以前は、フォルダの中で検索ボタンを押しても入力欄が出なかった)。サーバーを変えると覚えた場所は捨てる
 - 検索結果は「パスが空のとき」に出す。検索語を入れたら、開いていたフォルダから抜ける(`path.clear()`)。結果のアルバム/アーティストを開いて戻れば、検索語が残っているので結果に戻る。サーバーを変えると検索語は消える
 - 検索に非対応のサーバー(`GetSearchCapabilities` が無い・空)では「このサーバーは検索に対応していません」を出す。クライアント側での代替検索は未実装
 - `Music Server` の `SearchCaps`: `dc:creator, dc:date, dc:title, upnp:album, upnp:actor, upnp:artist, upnp:class, upnp:genre, @id, @parentID, @refID`
