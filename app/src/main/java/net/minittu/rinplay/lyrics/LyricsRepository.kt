@@ -65,6 +65,7 @@ class LyricsRepository(context: Context) {
     /** 曲(mediaId) → 歌詞。見つからなかった曲は [notFound] に入れる。 */
     private val memory = mutableMapOf<String, Lyrics>()
     private val notFound = mutableSetOf<String>()
+    private val offsets = mutableMapOf<String, Long>()
 
     /**
      * メタデータで歌詞を探す。見つからなければ null。
@@ -98,6 +99,23 @@ class LyricsRepository(context: Context) {
         memory[cacheKey] = lyrics
         notFound -= cacheKey
         writeCache(cacheKey, lyrics)
+    }
+
+    /** 曲(mediaId)ごとの同期のずれ(ミリ秒)。正なら歌詞を早く出す。無ければ 0。 */
+    suspend fun offsetMs(cacheKey: String): Long = withContext(Dispatchers.IO) {
+        offsets.getOrPut(cacheKey) {
+            runCatching { offsetFile(cacheKey).takeIf { it.isFile }?.readText()?.trim()?.toLong() }.getOrNull() ?: 0L
+        }
+    }
+
+    suspend fun saveOffsetMs(cacheKey: String, offsetMs: Long) = withContext(Dispatchers.IO) {
+        offsets[cacheKey] = offsetMs
+        runCatching {
+            cacheDir.mkdirs()
+            val file = offsetFile(cacheKey)
+            if (offsetMs == 0L) file.delete() else file.writeText(offsetMs.toString())
+        }.onFailure { Log.w(TAG, "オフセットを保存できません: $it") }
+        Unit
     }
 
     /** 曲名・アーティストで候補を探す。見つからなければ空。 */
@@ -221,6 +239,8 @@ class LyricsRepository(context: Context) {
     // --- 曲ごとのキャッシュ ---
 
     private fun cacheFile(cacheKey: String) = File(cacheDir, "${cacheKey.sha1()}.json")
+
+    private fun offsetFile(cacheKey: String) = File(cacheDir, "${cacheKey.sha1()}.offset")
 
     private fun readCache(cacheKey: String): Lyrics? {
         val file = cacheFile(cacheKey)

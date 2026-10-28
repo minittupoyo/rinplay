@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,10 +19,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -31,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,6 +81,13 @@ fun LyricsPane(
     var state by remember(mediaId) { mutableStateOf<LyricsUi>(LyricsUi.Loading) }
     var attempt by remember(mediaId) { mutableIntStateOf(0) }
     var searchOpen by remember(mediaId) { mutableStateOf(false) }
+    // 同期のずれ。正なら歌詞を早く出す(曲ごとに保存)。
+    var offsetMs by remember(mediaId) { mutableLongStateOf(0L) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(mediaId) {
+        offsetMs = mediaId?.let { repository.offsetMs(it) } ?: 0L
+    }
 
     LaunchedEffect(mediaId, attempt) {
         if (mediaId == null || query.title.isBlank()) {
@@ -135,7 +147,12 @@ fun LyricsPane(
 
             is LyricsUi.Found -> LyricsBody(
                 lyrics = current.lyrics,
-                positionMs = positionMs,
+                positionMs = positionMs + offsetMs,
+                offsetMs = offsetMs,
+                onOffsetChange = { value ->
+                    offsetMs = value
+                    if (mediaId != null) scope.launch { repository.saveOffsetMs(mediaId, value) }
+                },
                 onSearch = { searchOpen = true },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -148,9 +165,12 @@ fun LyricsPane(
 private fun LyricsBody(
     lyrics: Lyrics,
     positionMs: Long,
+    offsetMs: Long,
+    onOffsetChange: (Long) -> Unit,
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var adjusting by rememberSaveable { mutableStateOf(false) }
     Column(modifier = modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -161,8 +181,38 @@ private fun LyricsBody(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
+            if (lyrics.synced.isNotEmpty()) {
+                IconButton(onClick = { adjusting = !adjusting }) {
+                    Icon(
+                        Icons.Rounded.Tune,
+                        contentDescription = "同期のずれを調整",
+                        tint = if (offsetMs != 0L) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                    )
+                }
+            }
             IconButton(onClick = onSearch) {
                 Icon(Icons.Rounded.Search, contentDescription = "別の歌詞を検索")
+            }
+        }
+        if (adjusting && lyrics.synced.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { onOffsetChange((offsetMs - OFFSET_STEP_MS).coerceAtLeast(-OFFSET_MAX_MS)) }) {
+                    Text("遅く")
+                }
+                Text(
+                    text = "%+.1f 秒".format(offsetMs / 1000.0),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.widthIn(min = 64.dp),
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(onClick = { onOffsetChange((offsetMs + OFFSET_STEP_MS).coerceAtMost(OFFSET_MAX_MS)) }) {
+                    Text("早く")
+                }
+                TextButton(onClick = { onOffsetChange(0L) }, enabled = offsetMs != 0L) { Text("リセット") }
             }
         }
         when {
@@ -415,6 +465,10 @@ private val UNKNOWN_TAGS = setOf(
     "unknown artist",
     "unknown album",
 )
+
+/** 同期のずれ調整の刻みと上限。 */
+private const val OFFSET_STEP_MS = 100L
+private const val OFFSET_MAX_MS = 10_000L
 
 /** 長さがメタデータに載るまで待つ上限。 */
 private const val DURATION_WAIT_MS = 1_500L
