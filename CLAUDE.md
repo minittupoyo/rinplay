@@ -143,6 +143,7 @@
 - DLNA のジャケットは DIDL の `upnp:albumArtURI`(`DlnaEntry.artworkUri`)。`Music Server` は返す。サーバーによっては返さないので、無ければプレースホルダー
 - DLNA の音楽ライブラリ: サーバーを選ぶと `DlnaRepository.findMusicHome()` が、ルート直下の `Music` と、その中の曲(`All Music`)・アルバム(`Album`)・アーティスト(`Artist`)を**名前で**探す(英語・日本語の候補。サーバーごとに名前が違うため)。見つかれば `Music` を起点にして「ホーム / 曲 / アルバム / アーティスト」のタブを出す。見つからなければ従来どおりルートからのフォルダ閲覧。結果はセッション中キャッシュする
 - DLNA の行の種類は UPnP クラスで判定する(`object.container.album.musicAlbum` → アルバム、`object.container.person.musicArtist` → アーティスト、それ以外のコンテナ → フォルダ)。アルバム行は `アーティスト · N曲`(`upnp:artist`/`dc:creator` と `childCount`)、曲は `アーティスト — アルバム`(曲がすべて同じアルバムのときはアーティストのみ)
+- DLNA の曲のアーティスト: `Music Server`(MiniDLNA 1.3.3)は `upnp:artist` にアルバムアーティスト(`Various Artists` など)、`dc:creator` に曲のアーティストを入れる。そのため曲は `dc:creator` を優先し、なければ `upnp:artist`(`DlnaRepository`)。どちらも `Various Artists` の曲(サーバーが曲の値を持たない)は MediaItem に入れず空にして、再生中に ExoPlayer が読むファイルのタグで補う(ミニプレイヤーと再生中画面には出る。再生前の一覧・検索結果の曲行は空のまま)。確認は Heart+Heart / 君の手を離さない(Pixel 6a)。アルバム行は `upnp:artist` のまま
 - アーティスト行に件数は出さない。`Music Server` のアーティスト直下は `- All Albums -`(全曲まとめ)という疑似フォルダを含み、`childCount` がアルバム数と合わないため
 - パスは `Music` を起点とした相対(ホームのパスは空)。保存済みの古い絶対パス(`Music` から始まるもの)も、ID が絶対なのでそのまま使える
 - `Music Server` の構成(実測): ルート 0 → `Browse Folders` / `Music`(1)/ `Pictures` / `Video`。`Music` → `Album`(1$7)/ `All Music`(1$4)/ `Artist`(1$6)/ `Folders` / `Genre` / `Playlists` / `Recently Added`。メタデータのない曲は、タイトルだけで補足が空になる

@@ -340,7 +340,12 @@ class DlnaRepository(private val context: Context) {
                 ?: item.firstResource
                 ?: return@mapNotNull null
             val track = item as? MusicTrack
-            val artist = track?.firstArtist?.name ?: item.creator
+            // 曲のアーティストは dc:creator を優先する。MiniDLNA は upnp:artist にアルバムアーティスト
+            // (Various Artists など)を入れ、曲ごとのアーティストは dc:creator に入れる。
+            // どちらも Various Artists のときはサーバーが曲の値を持っていないことが多いので、空にして、
+            // 再生時にストリームのタグ(ExoPlayer が読む)で補う。
+            val artist = (item.creator?.takeIf { it.isNotBlank() } ?: track?.firstArtist?.name)
+                ?.takeUnless { it.equals("Various Artists", ignoreCase = true) }
             val artwork = item.artworkUrl()
             val mediaItem = MediaItem.Builder()
                 .setMediaId("dlna:${item.id}")
