@@ -171,7 +171,7 @@
 
 ### 歌詞(LRCLIB)
 - 全画面「再生中」の上部バーの歌詞アイコンで、ジャケットの場所を歌詞(`LyricsPane`)に切り替える。開いているかどうかは `AppRoot` の `showLyrics`(`rememberSaveable`)で持つので、閉じて開き直しても歌詞のまま。取得するのは歌詞を開いたときだけ(ミニプレイヤーや再生開始時には取らない)
-- 取得は `lyrics/LyricsRepository.kt`。LRCLIB(`https://lrclib.net`。API キー不要、`User-Agent: RinPlay v0.1 (https://github.com/minittupoyo/rinplay)` で名乗る)。まず `/api/get`(曲名・アーティスト・アルバム・長さ。**長さが ±2 秒以内のときだけ返る**)を試し、404 なら `/api/search?track_name=&artist_name=` の 1 件目を使う。アーティストが分からない曲(`不明なアーティスト` / `<unknown>`)は `/api/get` を飛ばして検索だけを使う
+- 取得は `lyrics/LyricsRepository.kt`。LRCLIB(`https://lrclib.net`。API キー不要、`User-Agent: RinPlay v<versionName> (https://github.com/minittupoyo/rinplay)` で名乗る。版は実行時に `PackageManager` から読む。`BuildConfig` は無効のため)。まず `/api/get`(曲名・アーティスト・アルバム・長さ。**長さが ±2 秒以内のときだけ返る**)を試し、404 なら `/api/search?track_name=&artist_name=` の 1 件目を使う。アーティストが分からない曲(`不明なアーティスト` / `<unknown>`)は `/api/get` を飛ばして検索だけを使う
 - 検索条件はファイルのメタデータ(タイトル・アーティスト・アルバム)と、再生中の曲の長さ。長さは曲の切り替え直後にまだ来ていないことがあるので、最大 1.5 秒待ってから送る(それでも来なければ長さ無しで探す)
 - 同期つき(`syncedLyrics`、LRC)があれば、再生位置に合わせて今の行を強調し、真ん中に来るように送る。位置の更新は 500ms ごとなので、行の切り替わりは最大 0.5 秒遅れる。同期つきがなければ `plainLyrics` をそのまま出す。`instrumental` は「インストゥルメンタル(歌詞なし)」
 - 同期のずれの調整: 同期つきの歌詞のヘッダーにある調整アイコン(`Icons.Rounded.Tune`)で「遅く / 早く」(0.1 秒刻み、±10 秒)とリセットを出す。ずれは再生位置に足して行を引く(正なら歌詞が早く出る)。曲(mediaId)ごとに `filesDir/lyrics/<sha1(mediaId)>.offset` に保存し(0 に戻すと削除)、次に再生したときも使う。ずれが 0 以外のときはアイコンがテーマ色になる(`LyricsRepository.offsetMs` / `saveOffsetMs`)

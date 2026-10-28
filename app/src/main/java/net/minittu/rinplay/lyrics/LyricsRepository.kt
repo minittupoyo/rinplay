@@ -62,6 +62,9 @@ class LyricsRepository(context: Context) {
 
     private val cacheDir = File(context.filesDir, "lyrics")
 
+    // LRCLIB はクライアントの識別(アプリ名・版・URL)を求めている。版は versionName から取る。
+    private val userAgent = "RinPlay v${versionName(context)} ($PROJECT_URL)"
+
     /** 曲(mediaId) → 歌詞。見つからなかった曲は [notFound] に入れる。 */
     private val memory = mutableMapOf<String, Lyrics>()
     private val notFound = mutableSetOf<String>()
@@ -177,7 +180,7 @@ class LyricsRepository(context: Context) {
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
-                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept", "application/json")
             }
             try {
@@ -277,8 +280,11 @@ class LyricsRepository(context: Context) {
         const val MAX_RETRY_WAIT_MS = 10_000L
         /** 再試行の待ち時間に足す揺らぎ(同期した再試行の波を避ける)。 */
         const val JITTER_RATIO = 0.3
-        // LRCLIB はクライアントの識別を求めている(アプリ名・版・URL)。
-        const val USER_AGENT = "RinPlay v0.1 (https://github.com/minittupoyo/rinplay)"
+        const val PROJECT_URL = "https://github.com/minittupoyo/rinplay"
+
+        fun versionName(context: Context): String = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "0"
     }
 }
 
