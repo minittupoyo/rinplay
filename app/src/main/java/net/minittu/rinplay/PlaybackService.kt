@@ -148,7 +148,11 @@ class PlaybackService : MediaSessionService() {
                 audioTrackConfig: AudioSink.AudioTrackConfig,
             ) {
                 liveTracks = (liveTracks - 1).coerceAtLeast(0)
-                if (liveTracks == 0) OutputFormatState.set(null)
+                // USB 直結には AudioTrack がない。OS 経由から直結へ切り替えたときに遅れて届く解放で、直結の表示を消さない
+                // (直結の表示は UsbDirectAudioSink が自分で消す)。
+                if (liveTracks == 0 && OutputFormatState.format.value?.path != OutputPath.USB_DIRECT) {
+                    OutputFormatState.set(null)
+                }
             }
         })
         session = MediaSession.Builder(this, player).build()
