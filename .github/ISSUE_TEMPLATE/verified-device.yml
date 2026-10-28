@@ -1,0 +1,101 @@
+name: 動作確認の報告
+description: 端末と USB DAC の組み合わせで、USB 直結を試した結果を報告する
+title: "動作確認: <端末> + <DAC> (Android <バージョン>)"
+labels: ["verified-device"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        USB DAC への直接出力を試した結果の報告です。動いた場合も、動かなかった場合も歓迎します(動かなかった場合は `bug` ラベルに付け替えます)。
+        同じ組み合わせの issue がないか、先に検索してください。
+  - type: input
+    id: device
+    attributes:
+      label: 端末
+      description: メーカー・型番・SoC
+      placeholder: "Google Pixel 6a / Tensor"
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android のバージョン
+      description: バージョンと API レベル
+      placeholder: "17 (API 37)"
+    validations:
+      required: true
+  - type: input
+    id: dac
+    attributes:
+      label: DAC
+      description: 製品名・VID:PID
+      placeholder: "Shanling UA3 (VID:PID)"
+    validations:
+      required: true
+  - type: dropdown
+    id: uac
+    attributes:
+      label: UAC のバージョン
+      options:
+        - UAC2
+        - UAC1
+        - 不明
+    validations:
+      required: true
+  - type: dropdown
+    id: volume
+    attributes:
+      label: DAC の音量(USB から操作できるか)
+      options:
+        - ある(Feature Unit あり)
+        - ない(本体のダイヤルなどで調整)
+        - 不明
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: RinPlay のバージョン
+      placeholder: "0.1.1"
+    validations:
+      required: true
+  - type: checkboxes
+    id: rates
+    attributes:
+      label: 確認したサンプリングレート
+      description: それぞれ、数十秒以上再生して問題がなかったもの
+      options:
+        - label: 44.1 kHz
+        - label: 48 kHz
+        - label: 88.2 kHz
+        - label: 96 kHz
+        - label: 176.4 kHz 以上
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 確認した項目
+      description: 問題がなかったものにチェックしてください
+      options:
+        - label: 再生画面の右上アイコンが USB 直結になった
+        - label: アンダーラン・`STALL`・エラーのログが出なかった
+        - label: 曲の切り替え(同じレート / レートが変わる)で止まらなかった
+        - label: 停止したあとに、OS 経由の再生が戻った
+        - label: DAC の抜き差しで落ちなかった
+        - label: 停止したあとに、DAC の音量が元に戻った(音量のある DAC のみ)
+  - type: dropdown
+    id: listening
+    attributes:
+      label: 聴感の確認(ノイズ・音飛びなど)
+      description: ログでは音が実際に出ているかは分かりません。
+      options:
+        - 聴いて確認した(問題なし)
+        - 聴いて確認した(問題あり。下の「補足」に書く)
+        - 聴いていない(ログのみ)
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足・うまくいかなかったこと
+      description: 失敗したときは、再生しているときの状況と logcat の該当行を貼ってください。ネットワークの IP や個人情報を含む行は除いてください。
+      render: text

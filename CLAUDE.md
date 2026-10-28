@@ -55,6 +55,31 @@
 - `android-actions/setup-android@v3` は、`packages: ""` にしないと、既定の `tools` が見つからず失敗する(ランナーの cmdline-tools にない)。Actions の `uses:` はバージョンタグ指定(コミット SHA での固定はしていない)
 - リモートのタグを付け直す(削除)のは、破壊的な操作なので、事前に確認する
 
+## 動作確認の報告(エージェント向け)
+
+新しい端末・DAC の組み合わせで USB 直結を試し、動いた構成を issue に報告するまでの手順。USB 直結の確認が目的で、DLNA は対象外。
+
+1. **環境を控える**(`adb -s <シリアル>`):
+   - 端末: `adb shell getprop ro.product.manufacturer` / `ro.product.model` / `ro.board.platform`
+   - Android: `adb shell getprop ro.build.version.release` / `ro.build.version.sdk`(ビルド番号は `ro.build.display.id`)
+   - アプリ: `adb shell dumpsys package net.minittu.rinplay | grep versionName`
+   - DAC: `adb shell dumpsys usb` から製品名・VID/PID を控える。UAC2 であることと、音量(Feature Unit)の有無は、直結を ON にしたときの logcat(`UsbDac` / `UsbOutput`)で見る
+2. **DAC を挿す前に無線デバッグへ切り替える**(挿すと USB ケーブルが PC に挿せない。手順は「実機・環境」)。ビルドして `installDebug` し、起動する
+3. **直結を ON にする**: 設定タブで「USB DAC に直接出力」を ON にし、権限ダイアログを許可する(座標は端末ごとに違うので、直前のスクショで確認してからタップ)。音量調整のない DAC は「音量調整のない DAC でも使う」も ON にする。**ヘッドホン・イヤホンを DAC に付けていないか、音量が小さいことを先にユーザーに確認する**
+4. **再生して確認する**(テスト音源は「実機・環境」。44.1k と 48k は必須、88.2k / 96k は可能なら):
+   - 再生画面の右上アイコンが USB 直結(USB マーク)になること
+   - logcat でアンダーラン・`STALL`・エラーが出ていないこと(数十秒〜1 分)
+   - 曲の切り替え(同じレート / レートが変わる)で止まらないこと
+   - 止めたあとに OS 経由の再生が戻ること。抜き差しで落ちないこと
+   - 音量のある DAC は、停止後に元の音量へ戻ること(`UsbVolume` のログ)
+5. **結果をまとめる**。通ったものと通らなかったもの(失敗は logcat の該当行つき)を分け、**音が実際に出たかはログで分からない**ので、聴感は「ユーザーが確認した場合のみ」書く。確認していない項目は書かない・推測で埋めない
+6. **issue にする**(`gh issue create`)。作る前に、本文をユーザーに見せて承認を得る(外部への公開なので)。同じ組み合わせの既存 issue がないか `gh issue list --search` で先に探す
+   - タイトル: `動作確認: <端末> + <DAC> (Android <バージョン>)`(例: `動作確認: Pixel 6a + Shanling UA3 (Android 17)`)
+   - ラベル: 動いたら `verified-device`、動かなかったら `bug`(ラベルがなければ付けずに作る)
+   - テンプレートは `.github/ISSUE_TEMPLATE/verified-device.yml`(issue フォーム)。`gh issue create` は YAML のフォームを使えないので、本文はこのフォームの項目の順に自分で組む
+   - 本文: 端末(メーカー・型番・SoC)/ Android(バージョンと API レベル)/ DAC(製品名・VID:PID・UAC バージョン・音量の有無)/ アプリのバージョン / 確認したレートと時間 / 結果(通った・通らなかった)/ 聴感の確認の有無 / 失敗時の logcat(個人情報・ネットワークの IP を含む行は除く)
+7. issue を作ったら、URL をユーザーに伝える。README の「動作確認した環境」の表は、ユーザーが指示したときだけ更新する
+
 ## 実装メモ
 
 ### 出力表示とビットパーフェクト(OS 側)
